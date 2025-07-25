@@ -1,4 +1,8 @@
-faster-whisper==1.0.0
+faster-whisper>=1.1.0
 torch>=2.0.0
 torchaudio>=2.0.0
-numpy>=1.21.0 
+numpy>=1.21.0
+whisper-timestamped>=1.14.0
+transformers>=4.51.0
+accelerate>=0.20.0
+sentencepiece>=0.1.99 
