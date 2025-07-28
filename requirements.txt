@@ -6,3 +6,6 @@ whisper-timestamped>=1.14.0
 transformers>=4.51.0
 accelerate>=0.20.0
 sentencepiece>=0.1.99 
+streamlit==1.32.2
+pandas==2.2.1
+json5==0.9.24 

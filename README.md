@@ -16,3 +16,6 @@
 ├── qwen3_test.py      # Qwen3-0.6B 모델 테스트 코드
 └── requirements.txt   # 프로젝트 의존성 패키지 목록
 ```
+
+# GUI
+Svelte + Vite
