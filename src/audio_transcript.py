@@ -18,15 +18,22 @@ class AudioSegment:
     end_time: float
     text: str
     words: List[WordTimestamp] = None
+    pii_types: List[str] = None
     
     def __post_init__(self):
         if self.words is None:
             self.words = []
+        if self.pii_types is None:
+            self.pii_types = []
     
     def add_word(self, word: str, start_time: float, end_time: float):
         """단어 타임스탬프 정보 추가"""
         word_timestamp = WordTimestamp(word, start_time, end_time)
         self.words.append(word_timestamp)
+    
+    def set_pii_types(self, types: List[str]):
+        """개인정보 유형 설정"""
+        self.pii_types = types
     
 class AudioTranscript:
     """음성 파일의 전사 정보를 저장하고 관리하는 클래스"""
@@ -79,7 +86,8 @@ class AudioTranscript:
                             "end_time": word.end_time
                         }
                         for word in seg.words
-                    ] if seg.words else []
+                    ] if seg.words else [],
+                    "pii_types": seg.pii_types
                 }
                 for seg in self.segments
             ]
@@ -118,6 +126,10 @@ class AudioTranscript:
                             word_data["start_time"],
                             word_data["end_time"]
                         )
+                
+                # PII 타입 정보 로드
+                if "pii_types" in seg_data:
+                    segment.set_pii_types(seg_data["pii_types"])
                 
             return True
         except Exception as e:
