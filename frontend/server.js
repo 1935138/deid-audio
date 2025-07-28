@@ -13,6 +13,20 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.static('dist'));
 
+// 시간 값을 숫자로 변환하는 함수
+function normalizeTimeValues(segments) {
+  return segments.map(segment => ({
+    ...segment,
+    start: parseFloat(segment.start) || 0,
+    end: parseFloat(segment.end) || 0,
+    words: segment.words?.map(word => ({
+      ...word,
+      start: parseFloat(word.start) || 0,
+      end: parseFloat(word.end) || 0
+    }))
+  }));
+}
+
 // 파일 목록을 가져오는 API
 app.get('/api/files', async (req, res) => {
   try {
@@ -54,8 +68,21 @@ app.get('/api/json/:filename', async (req, res) => {
 
   try {
     const content = await fs.readFile(filepath, 'utf-8');
-    res.json(JSON.parse(content));
+    const jsonData = JSON.parse(content);
+    
+    // segments가 있는 경우 시간 값을 숫자로 변환
+    if (jsonData.segments) {
+      jsonData.segments = normalizeTimeValues(jsonData.segments);
+      console.log('First segment time values:', {
+        start: jsonData.segments[0].start_time,
+        end: jsonData.segments[0].end_time,
+        type: typeof jsonData.segments[0].start_time
+      });
+    }
+    
+    res.json(jsonData);
   } catch (error) {
+    console.error('Error reading JSON file:', error);
     res.status(404).json({ error: 'JSON 파일을 찾을 수 없습니다.' });
   }
 });
