@@ -1,5 +1,12 @@
 import os
 from faster_whisper import WhisperModel
+import sys
+import time
+from pathlib import Path
+
+# AudioTranscript 클래스 import를 위한 경로 설정
+sys.path.append(str(Path(__file__).parent.parent))
+from src.audio_transcript import AudioTranscript
 
 def main():
     """
@@ -23,7 +30,7 @@ def main():
         print("CPU 모드 로딩 완료!")
     
     # 음성 파일 경로 설정
-    audio_file_path = "data/202503201100007_amone-relay-prod.wav"  # 실제 음성 파일 경로로 변경
+    audio_file_path = "data/202503200800003_amone-relay-prod.wav"  # 실제 음성 파일 경로로 변경
     
     # 파일 존재 확인
     if not os.path.exists(audio_file_path):
@@ -32,6 +39,9 @@ def main():
         return
     
     print(f"음성 파일 전사 시작: {audio_file_path}")
+    
+    # 전사 시작 시간 기록
+    start_time = time.time()
     
     # 음성 파일 전사
     # language="ko" 옵션으로 한국어 전사 최적화 가능
@@ -42,31 +52,41 @@ def main():
         word_timestamps=True  # 단어별 타임스탬프 포함
     )
     
+    # 처리 시간 계산
+    processing_time = time.time() - start_time
+    
     print(f"감지된 언어: {info.language} (확률: {info.language_probability:.2f})")
     print(f"전체 길이: {info.duration:.2f}초")
+    print(f"처리 시간: {processing_time:.2f}초")
     print("\n=== 전사 결과 ===")
     
-    # 결과 출력 및 저장
+    # AudioTranscript 객체 생성
+    transcript = AudioTranscript(audio_file_path)
+    
+    # 전체 텍스트 구성 및 세그먼트 추가
     full_text = ""
     for segment in segments:
         print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
         full_text += segment.text + " "
         
-        # 단어별 타임스탬프 출력 (옵션)
+        # 세그먼트 추가
+        audio_segment = transcript.add_segment(segment.start, segment.end, segment.text)
+        
+        # 단어별 타임스탬프 추가
         if hasattr(segment, 'words') and segment.words:
             for word in segment.words:
                 print(f"  - {word.word} [{word.start:.2f}s-{word.end:.2f}s]")
+                audio_segment.add_word(word.word, word.start, word.end)
     
-    # 결과를 텍스트 파일로 저장
-    output_file = "transcription_result.txt"
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(f"음성 파일: {audio_file_path}\n")
-        f.write(f"감지된 언어: {info.language}\n")
-        f.write(f"전체 길이: {info.duration:.2f}초\n")
-        f.write("\n=== 전사 결과 ===\n")
-        f.write(full_text.strip())
+    # 전체 전사 텍스트 및 모델 정보 추가
+    model_info = f"faster-whisper-{model_size} (lang: {info.language}, confidence: {info.language_probability:.2f})"
+    transcript.add_transcript(full_text.strip(), processing_time, model_info)
     
-    print(f"\n전사 결과가 {output_file}에 저장되었습니다.")
+    # JSON 파일로 저장
+    output_dir = "output"
+    output_path = transcript.save_to_json(output_dir)
+    
+    print(f"\n전사 결과가 {output_path}에 저장되었습니다.")
 
 if __name__ == "__main__":
     main() 
