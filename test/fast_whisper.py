@@ -23,7 +23,7 @@ def main():
         print("CPU 모드 로딩 완료!")
     
     # 음성 파일 경로 설정
-    audio_file_path = "data/202503201100010_amone-relay-prod.wav"  # 실제 음성 파일 경로로 변경
+    audio_file_path = "data/202503201100007_amone-relay-prod.wav"  # 실제 음성 파일 경로로 변경
     
     # 파일 존재 확인
     if not os.path.exists(audio_file_path):
