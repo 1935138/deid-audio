@@ -35,7 +35,7 @@ class AudioSegment:
         """개인정보 유형 설정"""
         self.pii_types = types
     
-class AudioTranscript:
+class AudioTranscriptInfo:
     """음성 파일의 전사 정보를 저장하고 관리하는 클래스"""
     
     def __init__(self, audio_path: str):

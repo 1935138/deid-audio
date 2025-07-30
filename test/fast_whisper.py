@@ -13,7 +13,7 @@ def main():
     faster-whisper를 사용하여 음성 파일을 전사하는 메인 함수
     """
     # 모델 크기 설정 (tiny, base, small, medium, large-v2, large-v3)
-    model_size = "medium"
+    model_size = "large-v3"
     
     # 모델 로드 (GPU 사용 시도, 실패하면 CPU로 대체)
     print(f"Whisper 모델 ({model_size}) 로딩 중...")
@@ -49,7 +49,10 @@ def main():
         audio_file_path, 
         language="ko",  # 한국어 설정 (None으로 설정시 자동 감지)
         beam_size=5,    # 빔 서치 크기
-        word_timestamps=True  # 단어별 타임스탬프 포함
+        temperature=0.0,
+        word_timestamps=True,  # 단어별 타임스탬프 포함
+        vad_filter=True,
+
     )
     
     # 처리 시간 계산
