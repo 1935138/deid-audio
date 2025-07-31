@@ -1,14 +1,15 @@
 import json
+from optparse import Option
 import requests
 import re
 from pydantic import BaseModel, Field, ValidationError
-from typing import List
+from typing import List, Optional
 from audio_transcript_info import AudioTranscriptInfo
-
+from enum import Enum
 
 class PIISentence(BaseModel):
     sentence_id: int = Field(description="개인정보가 포함된 문장의 번호")
-    pii_type: str = Field(description="개인정보의 유형")
+    pii_type: Optional[str] = Field(default=None, description="개인정보의 유형; NAME, RRN, PHONE, ADDRESS")
     pii_text: List[str] = Field(description="문장 전체가 아니라 개인정보 구간 정확히 추출")
 
 class PIISentences(BaseModel):
@@ -73,7 +74,7 @@ def mask_pii_in_text(text: str, pii_text: str) -> str:
     return result
 
 
-def mask_pii_in_words(words: List, pii_text: str, pii_type: str):
+def mask_pii_in_words(words: List, pii_text: str, pii_type: Optional[str]):
     """
     단어 레벨에서 PII를 마스킹하는 함수
     단어가 여러 개로 분리된 경우를 고려하여 처리
@@ -99,7 +100,7 @@ def mask_pii_in_words(words: List, pii_text: str, pii_type: str):
     mask_consecutive_words_for_pii(words, pii_text, pii_type)
 
 
-def mask_consecutive_words_for_pii(words: List, pii_text: str, pii_type: str):
+def mask_consecutive_words_for_pii(words: List, pii_text: str, pii_type: Optional[str]):
     """
     연속된 단어들이 합쳐져서 PII를 구성하는 경우를 처리
     예: "김철수"가 "김", "철수"로 분리된 경우
@@ -134,14 +135,16 @@ def extract_pii(text):
     prompt = f"""[INST] [INST] 아래는 환자와 의료진의 대화입니다. 각 문장에는 번호가 붙어 있습니다.
 
 당신의 작업은 다음과 같습니다:
-1. 전후 문맥을 고려하여 개인정보가 실제로 언급된 문장 찾아내세요. (이름, 주민등록번호, 전화번호, 거주지, 주소, 사는 곳)
-   - 질문에 개인정보가 명시되어 있으면 질문에서 추출
-   - 응답에 개인정보가 있다면 응답에서 추출
+1. 다음 항목 중 하나라도 명시적으로 언급된 문장을 문맥을 고려하여 찾아내세요:
+   - 이름
+   - 주민등록번호
+   - 전화번호
+   - 주소, 거주지, 사는 곳
 
 2. pii_text 필드는 문장 전체가 아니라 **개인정보 내용만** 정확히 추출합니다. 다음과 같이 추출하세요:
-  - [1] 부산시 사하구에 살아요 → "부산시 사하구"
-  - [2] 제 이름은 김철수입니다 → "김철수"
-  - [3] 주민등록번호는 901231-1234567이에요 → "901231-1234567"
+  - [0] 부산시 사하구에 살아요 → "부산시 사하구"
+  - [0] 제 이름은 김철수입니다 → "김철수"
+  - [0] 주민등록번호는 901231-1234567이에요 → "901231-1234567"
 
 * 주의사항
   - 텍스트 생성 시 Chinese character 사용 금지
@@ -158,7 +161,9 @@ def extract_pii(text):
     headers = {"Content-Type": "application/json"}
 
     data = {
-        "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+        # "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+        # "model": "LGAI-EXAONE/EXAONE-4.0-1.2B",
+        "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4096,
         "temperature": 0,
@@ -177,33 +182,19 @@ def extract_pii(text):
     return result
 
 if __name__ == "__main__":
-    # # 테스트용 예시 텍스트
-    # test_text = """
-    # [1] 환자분 성함이요?
-    # [2] 김철수 김철수
-    # [3] 주민등록번호가 214-23-2345678 맞으신가요?
-    # [4] 네
-    # [5] 연락처는 010-1234-5678이고, 
-    # [6] 환자 혈압 120/80 입니다.
-    # [7] 호흡 20회.
-    # [9] 환자 분 주거지가 어디예요?
-    # [10] 덕양이요
-    # [11] 생년월일은요? 990821
-    # """
-
-    json_file_path = "output/202503200800003_amone-relay-prod_20250731_024228.json"
-    formatted_text = format_json_file(json_file_path)
-    print(formatted_text[2700:3300])
-
-    # AudioTranscriptInfo 객체 생성 및 JSON 파일 로드
-    audio_transcript_info = AudioTranscriptInfo(json_file_path)
-    if not audio_transcript_info.load_from_json(json_file_path):
-        print("❌ JSON 파일 로드 실패")
-        exit(1)
-    
-    print(f"✅ 로드된 세그먼트 수: {len(audio_transcript_info.segments)}")
-    
-    result = extract_pii(formatted_text[2700:3300])
+    # 테스트용 예시 텍스트
+    test_text = """
+    [0] 환자분 이름이요?
+    [0] 김철수입니다.
+    [0] 나이가 어떻게 되세요?
+    [0] 36세 여성환자입니다.
+    [0] 환자 혈압 120에 80 맥박 70입니다.
+    [0] 산소포화도 98%
+    [1] 환자분 주민등록번호가 어떻게 되세요?
+    [2] 사는 곳이 어디예요? 주소.
+    [3] 덕양이요 의정부
+    """
+    result = extract_pii(test_text)
     try:
         if isinstance(result, str):
             result = json.loads(result)
@@ -211,9 +202,17 @@ if __name__ == "__main__":
         print("📝 PII 탐지 결과:")
         print(pii_result)
 
-        de_identified_audio_transcript_info = de_identification(audio_transcript_info, pii_result)
-        output_path = de_identified_audio_transcript_info.save_to_json("output")
-        print(f"✅ 비식별화 완료: {output_path}")
+        idx_list = [idx for idx, pii_sentence in enumerate(pii_result.pii_sentences) if pii_sentence.sentence_id == 0]
+
+        for idx in reversed(idx_list):
+            pii_result.pii_sentences.pop(idx)
+
+        print(pii_result)
+
+
+        # de_identified_audio_transcript_info = de_identification(audio_transcript_info, pii_result)
+        # output_path = de_identified_audio_transcript_info.save_to_json("output")
+        # print(f"✅ 비식별화 완료: {output_path}")
 
 
     except (json.JSONDecodeError, ValidationError) as e:
