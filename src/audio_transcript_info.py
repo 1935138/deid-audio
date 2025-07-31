@@ -14,6 +14,7 @@ class WordTimestamp:
 @dataclass
 class AudioSegment:
     """음성 파일의 세그먼트 정보를 저장하는 클래스"""
+    id: str
     start_time: float
     end_time: float
     text: str
@@ -56,7 +57,8 @@ class AudioTranscriptInfo:
         
     def add_segment(self, start_time: float, end_time: float, text: str) -> AudioSegment:
         """세그먼트 정보 추가"""
-        segment = AudioSegment(start_time, end_time, text)
+        segment_id = str(len(self.segments) + 1)  # 1부터 시작하는 단순 숫자
+        segment = AudioSegment(segment_id, start_time, end_time, text)
         self.segments.append(segment)
         return segment
         
@@ -76,6 +78,7 @@ class AudioTranscriptInfo:
             "model_info": self.model_info,
             "segments": [
                 {
+                    "id": seg.id,
                     "start_time": seg.start_time,
                     "end_time": seg.end_time,
                     "text": seg.text,
@@ -117,6 +120,10 @@ class AudioTranscriptInfo:
                     seg_data["end_time"],
                     seg_data["text"]
                 )
+                
+                # id 필드 수정 (이전 버전과의 호환성을 위해)
+                if "id" in seg_data:
+                    segment.id = seg_data["id"]
                 
                 # 단어 타임스탬프 정보 로드
                 if "words" in seg_data:
