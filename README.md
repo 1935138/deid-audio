@@ -5,6 +5,8 @@
 [x] faster-whisper를 사용하여 음성 파일을 전사하는 코드
 [x] whisper_timestamped 를 사용하여 정확한 단어 기준 타임스탬프를 찍으면서 전사하는 코드
 [x] Qwen/Qwen3-0.6B 테스트 코드
+[ ] 노이즈제거
+[ ] 시연을 위한 프로토타입
 
 ## 디렉토리 구성
 ```
@@ -17,5 +19,5 @@
 └── requirements.txt   # 프로젝트 의존성 패키지 목록
 ```
 
-# GUI
+# frontend
 Svelte + Vite
