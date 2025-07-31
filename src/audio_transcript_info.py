@@ -3,39 +3,34 @@ from typing import List, Optional
 from datetime import datetime
 import json
 import os
+from pydantic import BaseModel
 
 @dataclass
 class WordTimestamp:
     """단어별 타임스탬프 정보를 저장하는 클래스"""
     word: str
-    start_time: float
-    end_time: float
+    start: float
+    end: float
+    pii_type: str = None  # 개인정보 타입 필드 추가
 
 @dataclass
 class AudioSegment:
     """음성 파일의 세그먼트 정보를 저장하는 클래스"""
-    id: str
-    start_time: float
-    end_time: float
+    id: int
     text: str
+    start: float
+    end: float
     words: List[WordTimestamp] = None
-    pii_types: List[str] = None
-    
+
     def __post_init__(self):
         if self.words is None:
             self.words = []
-        if self.pii_types is None:
-            self.pii_types = []
-    
-    def add_word(self, word: str, start_time: float, end_time: float):
+
+    def add_word(self, word: str, start: float, end: float):
         """단어 타임스탬프 정보 추가"""
-        word_timestamp = WordTimestamp(word, start_time, end_time)
+        word_timestamp = WordTimestamp(word, start, end)
         self.words.append(word_timestamp)
-    
-    def set_pii_types(self, types: List[str]):
-        """개인정보 유형 설정"""
-        self.pii_types = types
-    
+
 class AudioTranscriptInfo:
     """음성 파일의 전사 정보를 저장하고 관리하는 클래스"""
     
@@ -55,10 +50,10 @@ class AudioTranscriptInfo:
         self.processed_date = datetime.now()
         self.model_info = model_info
         
-    def add_segment(self, start_time: float, end_time: float, text: str) -> AudioSegment:
+    def add_segment(self, start: float, end: float, text: str) -> AudioSegment:
         """세그먼트 정보 추가"""
         segment_id = str(len(self.segments) + 1)  # 1부터 시작하는 단순 숫자
-        segment = AudioSegment(segment_id, start_time, end_time, text)
+        segment = AudioSegment(id=segment_id, text=text, start=start, end=end)
         self.segments.append(segment)
         return segment
         
@@ -68,7 +63,8 @@ class AudioTranscriptInfo:
             os.makedirs(output_dir)
             
         base_name = os.path.splitext(self.file_name)[0]
-        output_path = os.path.join(output_dir, f"{base_name}_transcript.json")
+        timestamp = self.processed_date.strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(output_dir, f"{base_name}_{timestamp}.json")
         
         data = {
             "audio_file": self.file_name,
@@ -79,18 +75,18 @@ class AudioTranscriptInfo:
             "segments": [
                 {
                     "id": seg.id,
-                    "start_time": seg.start_time,
-                    "end_time": seg.end_time,
+                    "start": seg.start,
+                    "end": seg.end,
                     "text": seg.text,
                     "words": [
                         {
                             "word": word.word,
-                            "start_time": word.start_time,
-                            "end_time": word.end_time
+                            "start": word.start,
+                            "end": word.end,
+                            "pii_type": word.pii_type
                         }
                         for word in seg.words
-                    ] if seg.words else [],
-                    "pii_types": seg.pii_types
+                    ] if seg.words else []
                 }
                 for seg in self.segments
             ]
@@ -116,8 +112,8 @@ class AudioTranscriptInfo:
             self.segments = []
             for seg_data in data["segments"]:
                 segment = self.add_segment(
-                    seg_data["start_time"],
-                    seg_data["end_time"],
+                    seg_data["start"],
+                    seg_data["end"],
                     seg_data["text"]
                 )
                 
@@ -128,15 +124,13 @@ class AudioTranscriptInfo:
                 # 단어 타임스탬프 정보 로드
                 if "words" in seg_data:
                     for word_data in seg_data["words"]:
-                        segment.add_word(
+                        word_timestamp = WordTimestamp(
                             word_data["word"],
-                            word_data["start_time"],
-                            word_data["end_time"]
+                            word_data["start"],
+                            word_data["end"],
+                            word_data.get("pii_type")
                         )
-                
-                # PII 타입 정보 로드
-                if "pii_types" in seg_data:
-                    segment.set_pii_types(seg_data["pii_types"])
+                        segment.words.append(word_timestamp)
                 
             return True
         except Exception as e:
