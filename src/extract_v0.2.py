@@ -131,10 +131,10 @@ def extract_pii(text):
     # url = f"{vllm_host}/v1/completions"
     url = f"{vllm_host}/v1/chat/completions"
 
+    # System role: 페르소나, 작업 정의, 출력 규칙
+    system_message = f"""당신은 의료 대화에서 개인정보를 식별하는 전문가입니다.
 
-    prompt = f"""[INST] [INST] 아래는 환자와 의료진의 대화입니다. 각 문장에는 번호가 붙어 있습니다.
-
-당신의 작업은 다음과 같습니다:
+작업 정의:
 1. 다음 항목 중 하나라도 명시적으로 언급된 문장을 문맥을 고려하여 찾아내세요:
    - 이름 (NAME)
    - 주민등록번호 (RRN)
@@ -142,33 +142,69 @@ def extract_pii(text):
    - 주소, 거주지, 사는 곳 (ADDRESS)
    - 생년월일, 생년, 생일 (BIRTHDAY)
 
-   1-1. 다음과 같은 **항목 이름만 언급된 경우는 제외**하세요:
+2. 다음과 같은 **항목 이름만 언급된 경우는 제외**하세요:
    - 예: "전화번호 알려주세요", "성함이 어떻게 되세요?", "핸드폰 번호", "주민등록번호 확인할게요."
 
-2. pii_type 필드는 개인정보의 유형을 나타냅니다. 다음과 같이 추출하세요:
-   - NAME
-   - RRN
-   - PHONE
-   - ADDRESS
-   - BIRTHDAY
+3. pii_type 필드는 개인정보의 유형을 나타냅니다: NAME, RRN, PHONE, ADDRESS, BIRTHDAY
 
-3. pii_text 필드는 문장 전체가 아니라 **개인정보 내용만** 정확히 추출합니다. 다음과 같이 추출하세요:
-  - [0] 부산시 사하구에 살아요 → "부산시 사하구"
-  - [0] 제 이름은 김철수입니다 → "김철수"
-  - [0] 주민등록번호는 901231-1234567이에요 → "901231-1234567"
+4. pii_text 필드는 문장 전체가 아니라 **개인정보 내용만** 정확히 추출합니다.
 
-* 주의사항
-  - 텍스트 생성 시 Chinese character 사용 금지
+출력 규칙:
+- 반드시 아래 JSON 스키마를 준수하세요
+- 개인정보가 없다면 빈 배열로 응답: {{"pii_sentences": []}}
+- Chinese character 사용 금지
 
+JSON 스키마:
+{PIISentences.model_json_schema()}"""
 
-출력은 아래 JSON 스키마를 반드시 따르세요:
-{PIISentences.model_json_schema()}
+    # Assistant role: Few-shot 예시 (성공 사례와 빈 결과 사례 모두 포함)
+    assistant_message = """### 개인정보 추출 예시 ###
+
+예시 1 - 개인정보가 있는 경우:
+입력:
+[45] 부산시 사하구에 살아요
+[46] 제 이름은 김철수입니다  
+[47] 주민등록번호는 901231-1234567이에요
+
+출력:
+{
+  "pii_sentences": [
+    {
+      "sentence_id": 45,
+      "pii_type": "ADDRESS", 
+      "pii_text": ["부산시 사하구"]
+    },
+    {
+      "sentence_id": 46,
+      "pii_type": "NAME",
+      "pii_text": ["김철수"]
+    },
+    {
+      "sentence_id": 47, 
+      "pii_type": "RRN",
+      "pii_text": ["901231-1234567"]
+    }
+  ]
+}
+
+예시 2 - 개인정보가 없는 경우:
+입력:
+[100] 혈압이 어떻게 되세요?
+[101] 좀 높은 편이에요.
+[102] 약을 처방해드릴게요.
+
+출력:
+{
+  "pii_sentences": []
+}
+
+### 예시 종료 ###"""
+
+    # User role: 실제 분석 대상
+    user_message = f"""아래는 환자와 의료진의 대화입니다. 각 문장에는 번호가 붙어 있습니다.
 
 대화 내용:
-{text}
-[/INST]
-"""
-
+{text}"""
 
     headers = {"Content-Type": "application/json"}
 
@@ -176,7 +212,11 @@ def extract_pii(text):
         # "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
         # "model": "LGAI-EXAONE/EXAONE-4.0-1.2B",
         "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": system_message},
+            {"role": "assistant", "content": assistant_message},
+            {"role": "user", "content": user_message}
+        ],
         "max_tokens": 1024,
         "temperature": 0,
         "stream": False,
@@ -218,15 +258,6 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
             
         # 현재 윈도우의 텍스트 생성
         formatted_text = ""
-        # 성능 보장을 위한 dummy data
-        formatted_text += (
-            "[0] 환자분 이름이요?\n"
-            "[0] 김철수입니다.\n"
-            "[0] 나이가 어떻게 되세요?\n"
-            "[0] 36세 여성환자입니다.\n"
-            "[0] 환자 혈압 120에 80 맥박 70입니다.\n"
-            "[0] 산소포화도 98%\n"
-        )
         for segment in window_segments:
             formatted_text += f"[{segment['id']}] {segment['text']}\n"
         
@@ -236,6 +267,12 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
         try:
             if isinstance(result, str):
                 result = json.loads(result)
+            
+            # 빈 딕셔너리나 pii_sentences 필드가 없는 경우 처리
+            if not result or 'pii_sentences' not in result:
+                print(f"⚠️ 윈도우 {start_idx}~{start_idx + window_size} - 빈 결과 또는 잘못된 스키마")
+                continue
+            
             pii_result = PIISentences(**result)
             
             # 결과를 딕셔너리에 병합 (중복 제거)
@@ -263,6 +300,16 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
         except (json.JSONDecodeError, ValidationError) as e:
             print(f"⚠️ 윈도우 {start_idx}~{start_idx + window_size} 처리 중 오류 발생:", e)
             print("LLM 원시 출력:", result)
+            
+            # 오류가 발생한 경우, 빈 PIISentences 객체로 대체하여 계속 진행
+            try:
+                # 빈 결과로라도 처리를 계속할 수 있도록 함
+                if isinstance(result, str) and result.strip() == "{}":
+                    print(f"   → 빈 딕셔너리 응답으로 인한 오류, 스킵합니다.")
+                else:
+                    print(f"   → 예상치 못한 형식의 응답, 스킵합니다.")
+            except:
+                pass
             continue
     
     # 최종 결과 생성
@@ -295,8 +342,6 @@ def is_valid_pii(pii_type: str, text: str) -> bool:
 import os
 
 if __name__ == "__main__":
-
-
     for root, dirs, files in os.walk("output/transcript"):
         for file in files:
             if file.endswith(".json"):
@@ -304,8 +349,3 @@ if __name__ == "__main__":
                 print(f"▶ 전사 대상: {full_path}")
                 result = extract_pii_from_json(full_path)
                 print(result)
-    
-def test_one_json():
-    # 단일 텍스트 테스트
-    result = extract_pii_from_json("/home/jmlee/workspace/deid-audio/output/transcript/whisper-large-v3/202103230700001_ai-stt-relay001_20250801_081924.json")
-    print(result)

@@ -3,17 +3,27 @@ from faster_whisper import WhisperModel
 import sys
 import time
 from pathlib import Path
+import argparse
 
 # AudioTranscript 클래스 import를 위한 경로 설정
 sys.path.append(str(Path(__file__).parent.parent))
 from src.audio_transcript_info import AudioTranscriptInfo
 
-def main():
+def transcribe_audio(audio_file_path, model_size="medium", output_dir="output/transcript"):
     """
-    faster-whisper를 사용하여 음성 파일을 전사하는 메인 함수
+    faster-whisper를 사용하여 음성 파일을 전사하는 함수
+    
+    Args:
+        audio_file_path (str): 전사할 오디오 파일 경로
+        model_size (str): Whisper 모델 크기 (tiny, base, small, medium, large-v2, large-v3)
+        output_dir (str): 결과 JSON 파일이 저장될 디렉토리
+    
+    Returns:
+        str: 저장된 JSON 파일 경로
     """
-    # 모델 크기 설정 (tiny, base, small, medium, large-v2, large-v3)
-    model_size = "medium"
+    # 파일 존재 확인
+    if not os.path.exists(audio_file_path):
+        raise FileNotFoundError(f"오류: 음성 파일을 찾을 수 없습니다 - {audio_file_path}")
     
     # 모델 로드 (GPU 사용 시도, 실패하면 CPU로 대체)
     print(f"Whisper 모델 ({model_size}) 로딩 중...")
@@ -29,15 +39,6 @@ def main():
         model = WhisperModel(model_size, device="cpu", compute_type="int8")
         print("CPU 모드 로딩 완료!")
     
-    # 음성 파일 경로 설정
-    audio_file_path = "data/202503200800003_amone-relay-prod.wav"  # 실제 음성 파일 경로로 변경
-    
-    # 파일 존재 확인
-    if not os.path.exists(audio_file_path):
-        print(f"오류: 음성 파일을 찾을 수 없습니다 - {audio_file_path}")
-        print("data/ 폴더에 음성 파일을 넣어주세요.")
-        return
-    
     print(f"음성 파일 전사 시작: {audio_file_path}")
     
     # 전사 시작 시간 기록
@@ -52,7 +53,6 @@ def main():
         temperature=0.0,
         word_timestamps=True,  # 단어별 타임스탬프 포함
         vad_filter=True,
-
     )
     
     # 처리 시간 계산
@@ -86,10 +86,66 @@ def main():
     transcript.add_transcript(full_text.strip(), processing_time, model_info)
     
     # JSON 파일로 저장
-    output_dir = "output"
     output_path = transcript.save_to_json(output_dir)
     
     print(f"\n전사 결과가 {output_path}에 저장되었습니다.")
+    return output_path
+
+def main():
+    """
+    명령줄에서 오디오 파일 경로를 받아 전사를 수행하는 메인 함수
+    """
+    parser = argparse.ArgumentParser(
+        description="오디오 파일을 Whisper를 사용하여 전사하고 JSON으로 저장합니다.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+사용 예시:
+  python src/transcript.py audio.wav
+  python src/transcript.py data/recording.wav --model medium --output results/
+  python src/transcript.py recording.mp3 --model large-v3
+        """
+    )
+    
+    parser.add_argument(
+        "audio_file",
+        help="전사할 오디오 파일 경로"
+    )
+    
+    parser.add_argument(
+        "--model", "-m",
+        default="medium",
+        choices=["tiny", "base", "small", "medium", "large-v2", "large-v3"],
+        help="사용할 Whisper 모델 크기 (기본값: medium)"
+    )
+    
+    parser.add_argument(
+        "--output", "-o",
+        default="output",
+        help="결과 JSON 파일이 저장될 디렉토리 (기본값: output)"
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        output_path = transcribe_audio(args.audio_file, args.model, args.output)
+        print(f"✅ 전사 완료: {output_path}")
+    except FileNotFoundError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 전사 중 오류 발생: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    # main()
+
+    # transcribe_audio("data/raw/202103231200019_ai-stt-relay002.wav", "medium", "output/transcript")
+
+    for root, dirs, files in os.walk("data/denoised"):
+        for file in files:
+            if file.endswith(".wav"):
+                full_path = os.path.join(root, file)
+                print(f"▶ 전사 대상: {full_path}")
+                # transcribe_audio(full_path, "medium", "output/transcript")
+                # transcribe_audio(full_path, "byoussef/whisper-large-v2-Ko", "output/transcript_byoussef_whisper-large-v2-Ko")
+                transcribe_audio(full_path, "Systran/faster-whisper-large-v3", "output/transcript")
