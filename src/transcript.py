@@ -1,5 +1,5 @@
 import os
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, vad
 import sys
 import time
 from pathlib import Path
@@ -8,6 +8,7 @@ import argparse
 # AudioTranscript 클래스 import를 위한 경로 설정
 sys.path.append(str(Path(__file__).parent.parent))
 from src.audio_transcript_info import AudioTranscriptInfo
+
 
 def transcribe_audio(audio_file_path, model_size="medium", output_dir="output/transcript"):
     """
@@ -51,8 +52,17 @@ def transcribe_audio(audio_file_path, model_size="medium", output_dir="output/tr
         language="ko",  # 한국어 설정 (None으로 설정시 자동 감지)
         beam_size=5,    # 빔 서치 크기
         temperature=0.0,
+        patience=1.2,
         word_timestamps=True,  # 단어별 타임스탬프 포함
         vad_filter=True,
+        vad_parameters = vad.VadOptions(
+            threshold=0.5,
+            neg_threshold=None,
+            min_speech_duration_ms=1200,
+            max_speech_duration_s=30,
+            min_silence_duration_ms=2000,
+            speech_pad_ms=1000
+        )
     )
     
     # 처리 시간 계산
@@ -138,8 +148,6 @@ def main():
 
 if __name__ == "__main__":
     # main()
-
-    # transcribe_audio("data/raw/202103231200019_ai-stt-relay002.wav", "medium", "output/transcript")
 
     for root, dirs, files in os.walk("data/denoised"):
         for file in files:
