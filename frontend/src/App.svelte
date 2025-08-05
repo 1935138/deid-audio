@@ -127,13 +127,19 @@
     if (!segment.words) {
       return [{text: text, start: segment.start}];
     }
-    return segment.words;
+    // words 배열의 각 항목을 text 속성을 가진 형태로 변환
+    return segment.words.map(w => ({
+      text: w.word,
+      start: w.start,
+      end: w.end,
+      pii_type: w.pii_type
+    }));
   }
 </script>
 
-<main>
+<main class="main-container">
   <div class="container">
-    <!-- 좌측 영역: 전사 파일 목록 -->
+    <!-- 좌측 영역: 전사 파일 목록 (1) -->
     <div class="file-list-section">
       <h2>전사 파일 목록</h2>
       <div class="file-list">
@@ -187,7 +193,17 @@
                 </span>
               </div>
               <div class="segment-text">
-                {segment.text}
+                {#each getWords(segment.text, segment) as word}
+                  <span 
+                    class="word"
+                    on:click={() => handleWordClick(segment, word)}
+                    role="button"
+                    tabindex="0"
+                    on:keydown={(e) => e.key === 'Enter' && handleWordClick(segment, word)}
+                  >
+                    {word.text}
+                  </span>
+                {/each}
               </div>
             </div>
           {/each}
@@ -198,35 +214,73 @@
 </main>
 
 <style>
+  :global(*) {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  :global(html, body) {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  :global(#app) {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .main-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    background: #e0e0e0;
+  }
+
   .container {
     display: flex;
-    gap: 1rem;
-    padding: 1rem;
-    height: 100vh;
-    max-width: 100%;
-    margin: 0 auto;
+    gap: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
     box-sizing: border-box;
   }
 
   /* 좌측 영역: 1 비율 */
   .file-list-section {
     flex: 1;
+    height: 100%;
     background: #f5f5f5;
-    border-radius: 8px;
     padding: 1rem;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    border-right: 1px solid #ddd;
   }
 
   /* 우측 영역: 3 비율 */
   .content-section {
     flex: 3;
-    display: flex;
     flex-direction: column;
+    height: 100%;
+    display: flex;
     gap: 1rem;
     background: #f5f5f5;
-    border-radius: 8px;
     padding: 1rem;
     overflow: hidden;
   }
@@ -234,19 +288,23 @@
   .audio-player-section {
     background: white;
     padding: 1rem;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    height: 120px;
+    display: flex;
+    align-items: center;
   }
 
   audio {
     width: 100%;
+    height: 50px;
   }
 
   h2 {
-    margin-top: 0;
-    margin-bottom: 1rem;
+    margin: 0 0 1rem 0;
     color: #333;
     font-size: 1.2rem;
+    font-weight: 600;
   }
 
   .file-list {
@@ -255,6 +313,25 @@
     flex-direction: column;
     gap: 0.5rem;
     overflow-y: auto;
+    padding-right: 0.5rem;
+  }
+
+  .file-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .file-list::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+
+  .file-list::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+  }
+
+  .file-list::-webkit-scrollbar-thumb:hover {
+    background: #666;
   }
 
   .file-item {
@@ -266,27 +343,28 @@
     transition: all 0.2s ease;
     text-align: left;
     font-size: 0.9rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
   .file-item:hover {
-    background: #e0e0e0;
+    background: #f0f0f0;
     transform: translateY(-1px);
   }
 
   .file-item.selected {
     background: #007bff;
     color: white;
-    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+    box-shadow: 0 1px 3px rgba(0, 123, 255, 0.3);
   }
 
   .transcript-viewer {
     flex: 1;
     background: white;
     padding: 1rem;
-    border-radius: 8px;
+    border-radius: 4px;
     overflow-y: auto;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    height: calc(100% - 140px);
   }
 
   .segment {
@@ -326,5 +404,16 @@
   .segment-text {
     line-height: 1.5;
     font-size: 1.1em;
+  }
+
+  .word {
+    display: inline-block;
+    padding: 0 2px;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+
+  .word:hover {
+    background-color: #e3f2fd;
   }
 </style>

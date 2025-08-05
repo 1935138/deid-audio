@@ -11,7 +11,7 @@ class WordTimestamp:
     word: str
     start: float
     end: float
-    pii_type: str = None  # 개인정보 타입 필드 추가
+    is_pii: str = None  # 개인정보 타입 필드 추가
 
 @dataclass
 class AudioSegment:
@@ -83,7 +83,7 @@ class AudioTranscriptInfo:
                             "word": word.word,
                             "start": word.start,
                             "end": word.end,
-                            "pii_type": word.pii_type
+                            "is_pii": word.is_pii
                         }
                         for word in seg.words
                     ] if seg.words else []
@@ -129,7 +129,7 @@ class AudioTranscriptInfo:
                             word_data["word"],
                             word_data["start"],
                             word_data["end"],
-                            word_data.get("pii_type")
+                            word_data.get("is_pii")
                         )
                         segment.words.append(word_timestamp)
                 
