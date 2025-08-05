@@ -35,7 +35,7 @@ class AudioTranscriptInfo:
     """음성 파일의 전사 정보를 저장하고 관리하는 클래스"""
     
     def __init__(self, audio_path: str):
-        self.audio_path: str = audio_path
+        self.audio_path: str = os.path.abspath(audio_path)
         self.file_name: str = os.path.basename(audio_path)
         self.transcript: str = ""
         self.segments: List[AudioSegment] = []
@@ -67,7 +67,7 @@ class AudioTranscriptInfo:
         output_path = os.path.join(output_dir, f"{base_name}_{timestamp}.json")
         
         data = {
-            "audio_file": self.file_name,
+            "audio_file": self.audio_path,  # 전체 경로로 변경
             "transcript": self.transcript,
             "processing_time": self.processing_time,
             "processed_date": self.processed_date.isoformat(),
@@ -103,7 +103,8 @@ class AudioTranscriptInfo:
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 
-            self.file_name = data["audio_file"]
+            self.audio_path = data["audio_file"]  # 전체 경로 로드
+            self.file_name = os.path.basename(self.audio_path)
             self.transcript = data["transcript"]
             self.processing_time = data["processing_time"]
             self.processed_date = datetime.fromisoformat(data["processed_date"])

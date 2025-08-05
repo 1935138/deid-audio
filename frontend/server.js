@@ -11,7 +11,9 @@ const app = express();
 const PORT = 3000;
 
 app.use(cors());
-app.use(express.static('dist'));
+
+// 정적 파일 서빙 설정
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // 시간 값을 숫자로 변환하는 함수
 function normalizeTimeValues(segments) {
@@ -27,10 +29,10 @@ function normalizeTimeValues(segments) {
   }));
 }
 
-// 파일 목록을 가져오는 API
+// API 라우트들
 app.get('/api/files', async (req, res) => {
   try {
-    const dataDir = path.join(__dirname, '..', 'data');
+    const dataDir = path.join(__dirname, '..', 'data', 'raw');
     const outputDir = path.join(__dirname, '..', 'output');
 
     const [audioFiles, jsonFiles] = await Promise.all([
@@ -48,10 +50,9 @@ app.get('/api/files', async (req, res) => {
   }
 });
 
-// 오디오 파일을 스트리밍하는 API
 app.get('/api/audio/:filename', async (req, res) => {
   const filename = req.params.filename;
-  const filepath = path.join(__dirname, '..', 'data', filename);
+  const filepath = path.join(__dirname, '..', 'data', 'raw', filename);
 
   try {
     await fs.access(filepath);
@@ -61,7 +62,6 @@ app.get('/api/audio/:filename', async (req, res) => {
   }
 });
 
-// JSON 파일을 가져오는 API
 app.get('/api/json/:filename', async (req, res) => {
   const filename = req.params.filename;
   const filepath = path.join(__dirname, '..', 'output', filename);
@@ -70,14 +70,8 @@ app.get('/api/json/:filename', async (req, res) => {
     const content = await fs.readFile(filepath, 'utf-8');
     const jsonData = JSON.parse(content);
     
-    // segments가 있는 경우 시간 값을 숫자로 변환
     if (jsonData.segments) {
       jsonData.segments = normalizeTimeValues(jsonData.segments);
-      console.log('First segment time values:', {
-        start: jsonData.segments[0].start_time,
-        end: jsonData.segments[0].end_time,
-        type: typeof jsonData.segments[0].start_time
-      });
     }
     
     res.json(jsonData);
@@ -85,6 +79,11 @@ app.get('/api/json/:filename', async (req, res) => {
     console.error('Error reading JSON file:', error);
     res.status(404).json({ error: 'JSON 파일을 찾을 수 없습니다.' });
   }
+});
+
+// 기본 라우트 - SPA를 위한 설정
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => {

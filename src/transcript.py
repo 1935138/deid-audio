@@ -56,8 +56,8 @@ def transcribe_audio(audio_file_path, model_size="medium", output_dir="output/tr
         word_timestamps=True,  # 단어별 타임스탬프 포함
         vad_filter=True,
         vad_parameters = vad.VadOptions(
-            threshold=0.5,
-            neg_threshold=None,
+            threshold=0.4,
+            neg_threshold=0.15,
             min_speech_duration_ms=1200,
             max_speech_duration_s=30,
             min_silence_duration_ms=2000,
