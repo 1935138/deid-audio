@@ -11,7 +11,7 @@ class WordTimestamp:
     word: str
     start: float
     end: float
-    is_pii: str = None  # 개인정보 타입 필드 추가
+    is_pii: bool = False  # 개인정보 여부
 
 @dataclass
 class AudioSegment:

@@ -9,7 +9,6 @@ from enum import Enum
 
 class PIISentence(BaseModel):
     sentence_id: int = Field(description="개인정보가 포함된 문장의 번호")
-    pii_type: Optional[str] = Field(default=None, description="개인정보의 유형; NAME, RRN, PHONE, ADDRESS")
     pii_text: List[str] = Field(description="문장 전체가 아니라 개인정보 구간 정확히 추출")
 
 class PIISentences(BaseModel):
@@ -47,7 +46,7 @@ def de_identification(audio_transcript_info: AudioTranscriptInfo, pii_sentences:
                     segment.text = mask_pii_in_text(segment.text, pii_text)
                     
                     # 2. 단어 단위에서 PII 처리
-                    mask_pii_in_words(segment.words, pii_text, pii_sentence.pii_type)
+                    mask_pii_in_words(segment.words, pii_text)
                 
                 break
     return audio_transcript_info
@@ -74,7 +73,7 @@ def mask_pii_in_text(text: str, pii_text: str) -> str:
     return result
 
 
-def mask_pii_in_words(words: List, pii_text: str, pii_type: Optional[str]):
+def mask_pii_in_words(words: List, pii_text: str):
     """
     단어 레벨에서 PII를 마스킹하는 함수
     단어가 여러 개로 분리된 경우를 고려하여 처리
@@ -88,19 +87,19 @@ def mask_pii_in_words(words: List, pii_text: str, pii_type: Optional[str]):
     for word in words:
         if word.word.strip().lower() == pii_text.lower():
             word.word = "*" * len(word.word)
-            word.pii_type = pii_type
+            word.is_pii = True
     
     # 2. 부분 매칭 처리 (PII가 단어에 포함된 경우)
     for word in words:
         if pii_text.lower() in word.word.lower() and word.word != "*" * len(word.word):
             word.word = "*" * len(word.word)
-            word.pii_type = pii_type
+            word.is_pii = True
     
     # 3. 연속된 단어들로 구성된 PII 처리 (예: "김철수"가 "김", "철수"로 분리된 경우)
-    mask_consecutive_words_for_pii(words, pii_text, pii_type)
+    mask_consecutive_words_for_pii(words, pii_text)
 
 
-def mask_consecutive_words_for_pii(words: List, pii_text: str, pii_type: Optional[str]):
+def mask_consecutive_words_for_pii(words: List, pii_text: str):
     """
     연속된 단어들이 합쳐져서 PII를 구성하는 경우를 처리
     예: "김철수"가 "김", "철수"로 분리된 경우
@@ -122,7 +121,7 @@ def mask_consecutive_words_for_pii(words: List, pii_text: str, pii_type: Optiona
                 for k in range(i, j):
                     if words[k].word.strip() and words[k].word != "*" * len(words[k].word):
                         words[k].word = "*" * len(words[k].word)
-                        words[k].pii_type = pii_type
+                        words[k].is_pii = True
                 break
 
 
@@ -173,17 +172,14 @@ JSON 스키마:
   "pii_sentences": [
     {
       "sentence_id": 45,
-      "pii_type": "ADDRESS", 
       "pii_text": ["부산시 사하구"]
     },
     {
       "sentence_id": 46,
-      "pii_type": "NAME",
       "pii_text": ["김철수"]
     },
     {
       "sentence_id": 47, 
-      "pii_type": "RRN",
       "pii_text": ["901231-1234567"]
     }
   ]
@@ -284,7 +280,7 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
                     continue
 
                 # 유효한 PII 텍스트 확인
-                if not is_valid_pii(pii_sentence.pii_type, pii_sentence.pii_text[0]):
+                if not is_valid_pii(pii_sentence.pii_text[0]):
                     continue
 
                 # sentence_id가 0인 경우 스킵
@@ -320,23 +316,19 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
 
 import re
 
-def is_valid_pii(pii_type: str, text: str) -> bool:
-    if pii_type == "PHONE":
-        return any(char.isdigit() for char in text) # 숫자 포함 여부
+def is_valid_pii(text: str) -> bool:
+    """개인정보 텍스트가 유효한지 검사"""
+    # 숫자가 포함된 경우 (전화번호, 주민번호, 생년월일 등)
+    if any(char.isdigit() for char in text):
+        return True
     
-    elif pii_type == "RRN":
-        return any(char.isdigit() for char in text) # 숫자 포함 여부
-
-    elif pii_type == "BIRTHDAY":
-        return any(char.isdigit() for char in text) # 숫자 포함 여부
+    # 주소 (시, 구, 동 포함, 5자 이상)
+    if len(text.strip()) >= 5 and any(word in text for word in ["시", "구", "동", "읍", "면", "리"]) and not any(x in text for x in ["주소", "거주지", "사는 곳"]):
+        return True
     
-    elif pii_type == "ADDRESS":
-        # 시, 구, 동 포함, 5자 이상
-        return len(text.strip()) >= 5 and any(word in text for word in ["시", "구", "동", "읍", "면", "리"]) and not any(x in text for x in ["주소", "거주지", "사는 곳"])
-    
-    elif pii_type == "NAME":
-        # 1~4자 한글, "이름", "성함" 같은 표현 제외
-        return not any(x in text for x in ["이름", "성함"])
+    # 이름 ("이름", "성함" 같은 표현 제외)
+    if not any(x in text for x in ["이름", "성함"]):
+        return True
 
     return False
 
