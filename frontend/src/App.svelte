@@ -196,6 +196,7 @@
                 {#each getWords(segment.text, segment) as word}
                   <span 
                     class="word"
+                    class:pii={word.pii_type}
                     on:click={() => handleWordClick(segment, word)}
                     role="button"
                     tabindex="0"
@@ -415,5 +416,13 @@
 
   .word:hover {
     background-color: #e3f2fd;
+  }
+
+  .word.pii {
+    color: inherit;
+    background-color: #9fff9c;
+    box-shadow: 0 0 3px rgba(0, 255, 0, 0.3);
+    padding: 0 4px;
+    border-radius: 2px;
   }
 </style>
