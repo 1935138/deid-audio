@@ -70,9 +70,34 @@
 
   async function loadJsonContent(filename) {
     try {
+      console.log('🔄 JSON 파일 로드 시작:', filename);
       const response = await fetch(`/api/json/${filename}`);
+      console.log('📡 API 응답 상태:', response.status);
+      
       const data = await response.json();
-      console.log('Loaded segments:', data.segments?.slice(0, 2));
+      console.log('📊 전체 데이터:', data);
+      console.log('📝 세그먼트 개수:', data.segments?.length);
+      console.log('📋 처음 2개 세그먼트:', data.segments?.slice(0, 2));
+      
+      // PII 데이터 검사
+      if (data.segments) {
+        console.log('🔍 PII 데이터 검사 시작...');
+        const allPiiWords = [];
+        data.segments.forEach(segment => {
+          if (segment.words) {
+            segment.words.forEach(word => {
+              if (word.is_pii === true) {
+                allPiiWords.push(word);
+              }
+            });
+          }
+        });
+        console.log('🔢 전체 PII 단어 개수:', allPiiWords.length);
+        console.log('📝 PII 단어 예시:', allPiiWords.slice(0, 5));
+      } else {
+        console.warn('⚠️ segments 데이터가 없습니다!');
+      }
+      
       jsonContent = data;
       selectedJson = filename;
 
@@ -122,10 +147,12 @@
   }
 
   function updateCurrentSegment(time) {
-    if (jsonContent && jsonContent.segments) {
-      const segment = jsonContent.segments.find(seg => 
-        time >= seg.start && time <= seg.end
-      );
+    if (jsonContent && jsonContent.segments && isFinite(time) && time >= 0) {
+      const segment = jsonContent.segments.find(seg => {
+        const start = parseFloat(seg.start) || 0;
+        const end = parseFloat(seg.end) || 0;
+        return time >= start && time <= end;
+      });
       
       if (segment && segment !== currentSegment) {
         currentSegment = segment;
@@ -144,17 +171,57 @@
   }
 
   function playSegment(segment) {
-    if (audioPlayer && segment) {
-      audioPlayer.currentTime = segment.start_time;
-      audioPlayer.play();
-      currentSegment = segment;
+    if (!audioPlayer || !segment) {
+      console.warn('오디오 플레이어가 없거나 세그먼트가 없습니다.');
+      return;
+    }
+    
+    // 오디오가 로드되지 않았으면 return
+    if (audioPlayer.readyState < 1) {
+      console.warn('오디오가 아직 로드되지 않았습니다.');
+      return;
+    }
+    
+    try {
+      const startTime = parseFloat(segment.start || segment.start_time) || 0;
+      if (isFinite(startTime) && startTime >= 0 && startTime <= audioPlayer.duration) {
+        audioPlayer.currentTime = startTime;
+        audioPlayer.play().catch(error => {
+          console.error('오디오 재생 실패:', error);
+        });
+        currentSegment = segment;
+      } else {
+        console.warn('유효하지 않은 시간 값:', startTime, '오디오 길이:', audioPlayer.duration);
+      }
+    } catch (error) {
+      console.error('playSegment 오류:', error);
     }
   }
 
   function handleWordClick(segment, wordInfo) {
-    if (audioPlayer) {
-      audioPlayer.currentTime = wordInfo.start || segment.start;
-      audioPlayer.play();
+    if (!audioPlayer) {
+      console.warn('오디오 플레이어가 없습니다.');
+      return;
+    }
+    
+    // 오디오가 로드되지 않았으면 return
+    if (audioPlayer.readyState < 1) {
+      console.warn('오디오가 아직 로드되지 않았습니다.');
+      return;
+    }
+    
+    try {
+      const startTime = parseFloat(wordInfo.start || segment.start) || 0;
+      if (isFinite(startTime) && startTime >= 0 && startTime <= audioPlayer.duration) {
+        audioPlayer.currentTime = startTime;
+        audioPlayer.play().catch(error => {
+          console.error('오디오 재생 실패:', error);
+        });
+      } else {
+        console.warn('유효하지 않은 단어 시간 값:', startTime, '오디오 길이:', audioPlayer.duration);
+      }
+    } catch (error) {
+      console.error('handleWordClick 오류:', error);
     }
   }
 
@@ -163,12 +230,20 @@
       return [{text: text, start: segment.start}];
     }
     // words 배열의 각 항목을 text 속성을 가진 형태로 변환
-    return segment.words.map(w => ({
+    const words = segment.words.map(w => ({
       text: w.word,
       start: w.start,
       end: w.end,
-      pii_type: w.pii_type
+      is_pii: w.is_pii
     }));
+    
+    // PII 단어가 있는지 디버깅
+    const piiWords = words.filter(w => w.is_pii);
+    if (piiWords.length > 0) {
+      console.log('PII 단어 발견:', piiWords);
+    }
+    
+    return words;
   }
 </script>
 
@@ -200,7 +275,10 @@
             <div class="processed-file-item" class:selected={selectedJson === file.name}>
               <button
                 class="file-name-btn"
-                on:click={() => loadJsonContent(file.name)}
+                on:click={() => {
+                  console.log('🖱️ 파일 클릭됨:', file.name);
+                  loadJsonContent(file.name);
+                }}
               >
                 {file.name}
               </button>
@@ -218,7 +296,10 @@
             <button
               class="file-item"
               class:selected={selectedJson === file}
-              on:click={() => loadJsonContent(file)}
+              on:click={() => {
+                console.log('🖱️ 전체 파일 클릭됨:', file);
+                loadJsonContent(file);
+              }}
             >
               {file}
             </button>
@@ -250,29 +331,49 @@
             <div
               class="segment"
               class:current={currentSegment === segment}
-              on:click={() => playSegment(segment)}
+              on:click={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                playSegment(segment);
+              }}
               role="button"
               tabindex="0"
-              on:keydown={(e) => e.key === 'Enter' && playSegment(segment)}
+              on:keydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  playSegment(segment);
+                }
+              }}
               data-segment-id={segment.id}
             >
               <div class="segment-header">
                 <span class="segment-time">
-                  {formatTime(segment.start)} - {formatTime(segment.end)}
+                  {formatTime(parseFloat(segment.start) || 0)} - {formatTime(parseFloat(segment.end) || 0)}
                 </span>
                 <span class="segment-duration">
-                  (길이: {formatTime(segment.end - segment.start)})
+                  (길이: {formatTime((parseFloat(segment.end) || 0) - (parseFloat(segment.start) || 0))})
                 </span>
               </div>
               <div class="segment-text">
                 {#each getWords(segment.text, segment) as word}
                   <span 
                     class="word"
-                    class:pii={word.pii_type}
-                    on:click={() => handleWordClick(segment, word)}
+                    class:pii={word.is_pii}
+                    style={word.is_pii ? 'background-color: #9fff9c !important; border: 2px solid red;' : ''}
+                    on:click={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleWordClick(segment, word);
+                    }}
                     role="button"
                     tabindex="0"
-                    on:keydown={(e) => e.key === 'Enter' && handleWordClick(segment, word)}
+                    on:keydown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleWordClick(segment, word);
+                      }
+                    }}
+                    title={`PII: ${word.is_pii}`}
                   >
                     {word.text}
                   </span>
