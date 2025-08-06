@@ -9,8 +9,8 @@ from enum import Enum
 
 class PIISentence(BaseModel):
     sentence_id: int = Field(description="개인정보가 포함된 문장의 번호")
-    pii_text: List[str] = Field(description="문장 전체가 아니라 개인정보 구간 정확히 추출")
-    pii_type: Optional[str] = Field(default=None, description="개인정보 유형: NAME, RRN, PHONE, ADDRESS, BIRTHDAY")
+    pii_text: str = Field(description="문장 전체가 아니라 개인정보 구간 정확히 추출")
+    pii_type: Optional[str] = Field(default=None, description="개인정보 유형: NAME, RRN, PHONE, ADDRESS, BIRTHDAY, SYMPTOM, HOSPITAL")
 
 class PIISentences(BaseModel):
     pii_sentences: List[PIISentence]
@@ -34,66 +34,108 @@ def de_identification(audio_transcript_info: AudioTranscriptInfo, pii_sentences:
     """
     오디오 전사 정보에서 개인정보를 식별하여 is_pii 플래그 설정
     """
+    print(f"  🔍 PII 식별 시작: {len(pii_sentences.pii_sentences)}개의 PII 문장 처리")
+    
     for pii_sentence in pii_sentences.pii_sentences:
+        print(f"    📍 PII 문장 {pii_sentence.sentence_id}: {pii_sentence.pii_text}")
+        
+        segment_found = False
         for segment in audio_transcript_info.segments:
             if pii_sentence.sentence_id == int(segment.id):
-                # 각 PII 텍스트에 대해 처리
-                for pii_text in pii_sentence.pii_text:
-                    if not pii_text.strip():
-                        continue
-                    
+                print(f"      🎯 세그먼트 {segment.id} 발견: '{segment.text}'")
+                segment_found = True
+                
+                # PII 텍스트 처리
+                if pii_sentence.pii_text and pii_sentence.pii_text.strip():
+                    print(f"        🔎 PII 텍스트 '{pii_sentence.pii_text}' 처리 중...")
                     # 단어 단위에서 PII 플래그 설정
-                    mark_pii_in_words(segment.words, pii_text)
+                    mark_pii_in_words(segment.words, pii_sentence.pii_text)
                 
                 break
+        
+        if not segment_found:
+            print(f"      ❌ sentence_id {pii_sentence.sentence_id}에 해당하는 세그먼트를 찾을 수 없음!")
+            available_ids = [seg.id for seg in audio_transcript_info.segments[:10]]  # 처음 10개만 출력
+            print(f"      📋 사용 가능한 segment ID (처음 10개): {available_ids}")
+            
+            # PII 텍스트와 유사한 내용을 다른 segment에서 찾기
+            print(f"      🔍 '{pii_sentence.pii_text}' 와 유사한 내용을 다른 segment에서 찾는 중...")
+            found_segment = None
+            for seg in audio_transcript_info.segments:
+                if pii_sentence.pii_text.lower() in seg.text.lower():
+                    print(f"      🎯 유사한 내용 발견! segment {seg.id}: '{seg.text}'")
+                    found_segment = seg
+                    break
+            
+            # 자동으로 올바른 segment에서 PII 처리
+            if found_segment and pii_sentence.pii_text and pii_sentence.pii_text.strip():
+                print(f"      🔧 자동 수정: segment {found_segment.id}에서 PII 처리 진행")
+                mark_pii_in_words(found_segment.words, pii_sentence.pii_text)
     return audio_transcript_info
 
 
 def mark_pii_in_words(words: List, pii_text: str):
     """
     단어 레벨에서 PII를 식별하여 is_pii 플래그 설정
+    PII 텍스트가 단어들 사이에서 분리되거나 연결되어 나타날 수 있음을 고려
     """
     if not words or not pii_text.strip():
+        print(f"          ❌ 빈 words 또는 빈 pii_text")
         return
     
     pii_text = pii_text.strip()
+    print(f"          📋 단어들: {[w.word for w in words]}")
+    print(f"          🎯 찾을 PII: '{pii_text}'")
     
-    # 1. 완전 매칭 우선 처리
-    for word in words:
-        if word.word.strip().lower() == pii_text.lower():
-            word.is_pii = True
+    marked_words = []
     
-    # 2. 부분 매칭 처리 (PII가 단어에 포함된 경우)
-    for word in words:
-        if pii_text.lower() in word.word.lower():
-            word.is_pii = True
+    # PII 텍스트를 정규화 (공백, 특수문자 정리)
+    pii_normalized = re.sub(r'[^\w가-힣-]', '', pii_text.lower())
     
-    # 3. 연속된 단어들로 구성된 PII 처리 (예: "김철수"가 "김", "철수"로 분리된 경우)
-    mark_consecutive_words_for_pii(words, pii_text)
-
-
-def mark_consecutive_words_for_pii(words: List, pii_text: str):
-    """
-    연속된 단어들이 합쳐져서 PII를 구성하는 경우를 처리하여 is_pii 플래그 설정
-    """
-    if len(words) < 2:
+    # 전체 세그먼트 텍스트를 하나로 합치기 (단어 경계 무시)
+    full_text = ''.join([w.word.strip() for w in words])
+    full_text_normalized = re.sub(r'[^\w가-힣-]', '', full_text.lower())
+    
+    print(f"          🔍 정규화된 PII: '{pii_normalized}'")
+    print(f"          🔍 정규화된 전체 텍스트: '{full_text_normalized}'")
+    
+    # PII가 전체 텍스트에 포함되어 있는지 확인
+    if pii_normalized not in full_text_normalized:
+        print(f"          ❌ PII가 전체 텍스트에서 발견되지 않음")
         return
     
-    pii_text_cleaned = re.sub(r'\s+', '', pii_text.lower())  # 공백 제거
+    # PII의 시작 위치 찾기
+    pii_start_pos = full_text_normalized.find(pii_normalized)
+    pii_end_pos = pii_start_pos + len(pii_normalized)
     
-    # 슬라이딩 윈도우 방식으로 연속된 단어들 확인
-    for i in range(len(words)):
-        for j in range(i + 1, min(i + 5, len(words) + 1)):  # 최대 5개 단어까지 확인
-            # 연속된 단어들을 합쳐서 확인
-            combined_text = ''.join([w.word.strip() for w in words[i:j]]).lower()
-            combined_text = re.sub(r'[^\w가-힣]', '', combined_text)  # 특수문자 제거
+    print(f"          📍 PII 위치: {pii_start_pos} ~ {pii_end_pos}")
+    
+    # 각 단어의 위치를 계산하여 PII 범위와 겹치는지 확인
+    current_pos = 0
+    for word in words:
+        word_clean = word.word.strip()
+        if not word_clean:
+            continue
             
-            if combined_text and combined_text in pii_text_cleaned:
-                # 해당 구간의 모든 단어에 PII 플래그 설정
-                for k in range(i, j):
-                    if words[k].word.strip():
-                        words[k].is_pii = True
-                break
+        word_normalized = re.sub(r'[^\w가-힣-]', '', word_clean.lower())
+        word_start_pos = current_pos
+        word_end_pos = current_pos + len(word_normalized)
+        
+        # 단어가 PII 범위와 겹치는지 확인
+        if (word_start_pos < pii_end_pos and word_end_pos > pii_start_pos):
+            word.is_pii = True
+            marked_words.append(f"위치매칭: {word.word}")
+            print(f"            ✅ '{word.word}' (위치: {word_start_pos}~{word_end_pos}) -> PII 범위와 겹침")
+        
+        current_pos = word_end_pos
+    
+    if marked_words:
+        print(f"          ✅ PII 플래그 설정됨: {marked_words}")
+    else:
+        print(f"          ❌ PII 플래그 설정되지 않음")
+
+
+
 
 
 def extract_pii(text):
@@ -111,13 +153,20 @@ def extract_pii(text):
    - 전화번호 (PHONE)
    - 주소, 거주지, 사는 곳 (ADDRESS)
    - 생년월일, 생년, 생일 (BIRTHDAY)
+   - 구체적인 증상, 질병명 (SYMPTOM)
+   - 병원명, 의료기관명 (HOSPITAL)
+
+⚠️ 중요: sentence_id는 반드시 개인정보가 실제로 등장하는 문장의 번호여야 합니다.
+- 질문 문장이 아닌 답변 문장의 ID를 사용하세요
+- 예: "성함이 어떻게 되세요?"(질문) → "김철수요"(답변) 인 경우, 답변 문장의 ID를 사용
 
 2. 다음과 같은 경우는 개인정보로 간주하지 마세요:
    - 단순한 건강 수치 정보: 혈압, 맥박, 혈당, 키/몸무게, 체온, 나이, 성별, 혈액형 등
    - 예: "혈압은 130에 90입니다", "나이는 65세입니다" 등의 문장은 제외
    - 항목 이름만 언급된 경우: "전화번호 알려주세요", "성함이 어떻게 되세요?" 등
+   - 일반적인 증상: "아파요", "불편해요" 등은 제외하고 구체적인 질병명이나 증상만 포함
 
-3. pii_type 필드는 개인정보의 유형을 나타냅니다: NAME, RRN, PHONE, ADDRESS, BIRTHDAY
+3. pii_type 필드는 개인정보의 유형을 나타냅니다: NAME, RRN, PHONE, ADDRESS, BIRTHDAY, SYMPTOM, HOSPITAL
 
 4. pii_text 필드는 문장 전체가 아니라 **개인정보 내용만** 정확히 추출합니다.
 
@@ -134,24 +183,43 @@ JSON 스키마:
 
 예시 1 - 개인정보가 있는 경우:
 입력:
-[45] 부산시 사하구에 살아요
-[46] 제 이름은 김철수입니다  
-[47] 주민등록번호는 901231-1234567이에요
+[45] 어디 사세요?
+[46] 부산시 사하구에 살아요
+[47] 성함이 어떻게 되세요?
+[48] 김철수요
+[49] 주민등록번호는 901231-1234567이에요
+[50] 어떤 증상이세요?
+[51] 당뇨병이 있어요
+[52] 어느 병원에서 치료받으세요?
+[53] 서울대병원에서 치료받고 있어요
 
 출력:
 {
   "pii_sentences": [
     {
-      "sentence_id": 45,
-      "pii_text": ["부산시 사하구"]
-    },
-    {
       "sentence_id": 46,
-      "pii_text": ["김철수"]
+      "pii_text": "부산시 사하구",
+      "pii_type": "ADDRESS"
     },
     {
-      "sentence_id": 47, 
-      "pii_text": ["901231-1234567"]
+      "sentence_id": 48,
+      "pii_text": "김철수",   
+      "pii_type": "NAME"
+    },
+    {
+      "sentence_id": 49, 
+      "pii_text": "901231-1234567",
+      "pii_type": "RRN"
+    },
+    {
+      "sentence_id": 51,
+      "pii_text": "당뇨병",
+      "pii_type": "SYMPTOM"
+    },
+    {
+      "sentence_id": 53,
+      "pii_text": "서울대병원",
+      "pii_type": "HOSPITAL"
     }
   ]
 }
@@ -166,6 +234,30 @@ JSON 스키마:
 {
   "pii_sentences": []
 }
+
+예시 3 - 질문-답변 패턴:
+입력:
+[200] 환자분 성함이 어떻게 되세요?
+[201] 아 전영희이요
+[202] 네 전, 영, 희
+
+출력:
+{
+  "pii_sentences": [
+    {
+      "sentence_id": 201,
+      "pii_text": "전영희",
+      "pii_type": "NAME"
+    },
+    {
+      "sentence_id": 202,
+      "pii_text": "전영희",
+      "pii_type": "NAME"
+    }
+  ]
+}
+
+주의: 200번 문장은 질문이므로 포함하지 않고, 실제 이름이 나온 201, 202번 문장만 포함
 
 ### 예시 종료 ###"""
 
@@ -230,8 +322,15 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
         for segment in window_segments:
             formatted_text += f"[{segment['id']}] {segment['text']}\n"
         
+        print(f"🔍 윈도우 {start_idx}~{start_idx + len(window_segments)}: segment ID {window_segments[0]['id']}~{window_segments[-1]['id']}")
+        print(f"  📝 LLM에게 전송하는 텍스트 미리보기:")
+        print(f"  {formatted_text[:200]}..." if len(formatted_text) > 200 else f"  {formatted_text}")
+        print()
+        
         # PII 추출
         result = extract_pii(formatted_text)
+        print("🔍 LLM 응답:", result)
+
         
         try:
             if isinstance(result, str):
@@ -246,25 +345,41 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
             
             # 결과를 딕셔너리에 병합 (중복 제거)
             for pii_sentence in pii_result.pii_sentences:
-                # 빈 리스트 체크를 먼저 수행
-                if len(pii_sentence.pii_text) == 0:
+                print(f"  📝 처리 중인 PII: sentence_id={pii_sentence.sentence_id}, pii_text={pii_sentence.pii_text}")
+                
+                # 빈 문자열 체크
+                if not pii_sentence.pii_text or not pii_sentence.pii_text.strip():
+                    print(f"    ❌ 빈 pii_text로 인해 스킵")
                     continue
 
                 # 유효한 PII 텍스트 확인
-                if not is_valid_pii(pii_sentence.pii_text[0]):
+                if not is_valid_pii(pii_sentence.pii_text):
+                    print(f"    ❌ 유효하지 않은 PII 텍스트로 인해 스킵: {pii_sentence.pii_text}")
                     continue
+                print(f"    ✅ 유효한 PII 텍스트: {pii_sentence.pii_text}")
 
                 # sentence_id가 0인 경우 스킵
                 if pii_sentence.sentence_id == 0:
+                    print(f"    ❌ sentence_id가 0이라서 스킵")
                     continue
 
-                # BIRTHDAY 타입 제외 (필요시)
+                # 특정 타입 제외
                 if pii_sentence.pii_type == "BIRTHDAY":
+                    print(f"    ❌ BIRTHDAY 타입이라서 스킵")
+                    continue
+                if pii_sentence.pii_type == "SYMPTOM":
+                    print(f"    ❌ SYMPTOM 타입이라서 스킵")
+                    continue
+                if pii_sentence.pii_type == "HOSPITAL":
+                    print(f"    ❌ HOSPITAL 타입이라서 스킵")
                     continue
 
                 # 중복 sentence_id는 무시하고, 처음 등장한 것만 저장
                 if pii_sentence.sentence_id not in all_pii_sentences:
                     all_pii_sentences[pii_sentence.sentence_id] = pii_sentence
+                    print(f"    ✅ PII 추가됨: sentence_id={pii_sentence.sentence_id}")
+                else:
+                    print(f"    ⚠️ 중복 sentence_id로 인해 스킵: {pii_sentence.sentence_id}")
                 
         
         except (json.JSONDecodeError, ValidationError) as e:
@@ -290,15 +405,53 @@ import re
 
 def is_valid_pii(text: str) -> bool:
     """개인정보 텍스트가 유효한지 검사"""
+    if not text or not text.strip():
+        print(f"        🔍 PII 검증 '{text}': 빈 텍스트 → False")
+        return False
+    
+    text = text.strip()
+    print(f"        🔍 PII 검증 '{text}' 시작...")
+    
     # 숫자가 포함된 경우 (전화번호, 주민번호, 생년월일 등)
     if any(char.isdigit() for char in text):
+        print(f"          ✅ 숫자 포함 → True")
         return True
     
-    # 이름 ("이름", "성함" 같은 표현 제외)
-    if not any(x in text for x in ["이름", "성함"]):
-        return True
-
-    return False
+    # 너무 짧은 텍스트 제외 (1글자)
+    if len(text) < 2:
+        print(f"          ❌ 너무 짧음 (길이: {len(text)}) → False")
+        return False
+    
+    # 완전히 일치하는 무효한 단어들 (이름이 아닌 것들)
+    invalid_exact_words = [
+        "이름", "성함", "신분", "보호자", "번호", "휴대폰", "환자", "분", 
+        "님", "씨", "선생", "의사", "간호사", "어디", "어떻게", "네", "아니",
+        "그런", "이런", "저런", "것", "거", "게", "무엇", "언제", "왜"
+    ]
+    
+    # 관계 표현 + "분" 조합 체크
+    relations = ['보호자', '아내', '남편', '아들', '딸', '어머니', '아버지', '부모', '환자']
+    for relation in relations:
+        if f"{relation}분" in text:
+            print(f"          ❌ 관계 표현 '{relation}분' 포함 → False")
+            return False
+    
+    # 완전히 일치하는 무효한 단어인 경우만 제외
+    if text.strip() in invalid_exact_words:
+        print(f"          ❌ 무효한 키워드와 완전 일치 → False")
+        return False
+    
+    # 명백히 이름이 아닌 패턴들 제외
+    # 예: "어떻게 되세요", "성함이 뭐예요" 등
+    invalid_phrases = ["어떻게", "되세요", "뭐예요", "무엇"]
+    for phrase in invalid_phrases:
+        if phrase in text:
+            print(f"          ❌ 무효한 패턴 '{phrase}' 포함 → False")
+            return False
+    
+    # 그 외의 경우 유효한 것으로 간주
+    print(f"          ✅ 기타 유효한 PII → True")
+    return True
 
 
 import os
@@ -312,6 +465,8 @@ if __name__ == "__main__":
     
     for root, dirs, files in os.walk("output/transcript"):
         for file in files:
+            # if not file.startswith("202103231200019_ai-stt-relay002"):
+                # continue
             if file.endswith(".json"):
                 full_path = os.path.join(root, file)
                 print(f"▶ 처리 대상: {full_path}")
