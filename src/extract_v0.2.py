@@ -10,6 +10,7 @@ from enum import Enum
 class PIISentence(BaseModel):
     sentence_id: int = Field(description="개인정보가 포함된 문장의 번호")
     pii_text: List[str] = Field(description="문장 전체가 아니라 개인정보 구간 정확히 추출")
+    pii_type: Optional[str] = Field(default=None, description="개인정보 유형: NAME, RRN, PHONE, ADDRESS, BIRTHDAY")
 
 class PIISentences(BaseModel):
     pii_sentences: List[PIISentence]
@@ -31,8 +32,7 @@ def format_json_file(json_file_path):
 
 def de_identification(audio_transcript_info: AudioTranscriptInfo, pii_sentences: PIISentences):
     """
-    오디오 전사 정보에서 개인정보를 비식별화 처리
-    세그먼트 단위와 단어 단위 모두 정교하게 처리
+    오디오 전사 정보에서 개인정보를 식별하여 is_pii 플래그 설정
     """
     for pii_sentence in pii_sentences.pii_sentences:
         for segment in audio_transcript_info.segments:
@@ -42,41 +42,16 @@ def de_identification(audio_transcript_info: AudioTranscriptInfo, pii_sentences:
                     if not pii_text.strip():
                         continue
                     
-                    # 1. 세그먼트 텍스트에서 PII 부분만 마스킹
-                    segment.text = mask_pii_in_text(segment.text, pii_text)
-                    
-                    # 2. 단어 단위에서 PII 처리
-                    mask_pii_in_words(segment.words, pii_text)
+                    # 단어 단위에서 PII 플래그 설정
+                    mark_pii_in_words(segment.words, pii_text)
                 
                 break
     return audio_transcript_info
 
 
-def mask_pii_in_text(text: str, pii_text: str) -> str:
+def mark_pii_in_words(words: List, pii_text: str):
     """
-    텍스트에서 PII 부분만 마스킹하는 함수
-    대소문자 구분 없이 처리하고, 공백과 구두점을 고려함
-    """
-    if not pii_text.strip():
-        return text
-    
-    # 정확한 매칭을 위해 정규식 사용
-    # 특수문자를 이스케이프하고 공백을 유연하게 처리
-    escaped_pii = re.escape(pii_text.strip())
-    pattern = re.sub(r'\\ ', r'\\s*', escaped_pii)  # 공백을 유연하게 매칭
-    
-    def replace_with_mask(match):
-        return "*" * len(match.group())
-    
-    # 대소문자 구분 없이 매칭
-    result = re.sub(pattern, replace_with_mask, text, flags=re.IGNORECASE)
-    return result
-
-
-def mask_pii_in_words(words: List, pii_text: str):
-    """
-    단어 레벨에서 PII를 마스킹하는 함수
-    단어가 여러 개로 분리된 경우를 고려하여 처리
+    단어 레벨에서 PII를 식별하여 is_pii 플래그 설정
     """
     if not words or not pii_text.strip():
         return
@@ -86,23 +61,20 @@ def mask_pii_in_words(words: List, pii_text: str):
     # 1. 완전 매칭 우선 처리
     for word in words:
         if word.word.strip().lower() == pii_text.lower():
-            word.word = "*" * len(word.word)
             word.is_pii = True
     
     # 2. 부분 매칭 처리 (PII가 단어에 포함된 경우)
     for word in words:
-        if pii_text.lower() in word.word.lower() and word.word != "*" * len(word.word):
-            word.word = "*" * len(word.word)
+        if pii_text.lower() in word.word.lower():
             word.is_pii = True
     
     # 3. 연속된 단어들로 구성된 PII 처리 (예: "김철수"가 "김", "철수"로 분리된 경우)
-    mask_consecutive_words_for_pii(words, pii_text)
+    mark_consecutive_words_for_pii(words, pii_text)
 
 
-def mask_consecutive_words_for_pii(words: List, pii_text: str):
+def mark_consecutive_words_for_pii(words: List, pii_text: str):
     """
-    연속된 단어들이 합쳐져서 PII를 구성하는 경우를 처리
-    예: "김철수"가 "김", "철수"로 분리된 경우
+    연속된 단어들이 합쳐져서 PII를 구성하는 경우를 처리하여 is_pii 플래그 설정
     """
     if len(words) < 2:
         return
@@ -117,10 +89,9 @@ def mask_consecutive_words_for_pii(words: List, pii_text: str):
             combined_text = re.sub(r'[^\w가-힣]', '', combined_text)  # 특수문자 제거
             
             if combined_text and combined_text in pii_text_cleaned:
-                # 해당 구간의 모든 단어를 마스킹
+                # 해당 구간의 모든 단어에 PII 플래그 설정
                 for k in range(i, j):
-                    if words[k].word.strip() and words[k].word != "*" * len(words[k].word):
-                        words[k].word = "*" * len(words[k].word)
+                    if words[k].word.strip():
                         words[k].is_pii = True
                 break
 
@@ -287,6 +258,7 @@ def extract_pii_from_json(json_file_path: str) -> PIISentences:
                 if pii_sentence.sentence_id == 0:
                     continue
 
+                # BIRTHDAY 타입 제외 (필요시)
                 if pii_sentence.pii_type == "BIRTHDAY":
                     continue
 
@@ -322,10 +294,6 @@ def is_valid_pii(text: str) -> bool:
     if any(char.isdigit() for char in text):
         return True
     
-    # 주소 (시, 구, 동 포함, 5자 이상)
-    if len(text.strip()) >= 5 and any(word in text for word in ["시", "구", "동", "읍", "면", "리"]) and not any(x in text for x in ["주소", "거주지", "사는 곳"]):
-        return True
-    
     # 이름 ("이름", "성함" 같은 표현 제외)
     if not any(x in text for x in ["이름", "성함"]):
         return True
@@ -336,10 +304,54 @@ def is_valid_pii(text: str) -> bool:
 import os
 
 if __name__ == "__main__":
+    output_dir = "output/processed"
+    
+    # 출력 디렉토리 생성
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
     for root, dirs, files in os.walk("output/transcript"):
         for file in files:
             if file.endswith(".json"):
                 full_path = os.path.join(root, file)
-                print(f"▶ 전사 대상: {full_path}")
-                result = extract_pii_from_json(full_path)
-                print(result)
+                print(f"▶ 처리 대상: {full_path}")
+                
+                try:
+                    # 1. PII 추출
+                    print("  1. PII 추출 중...")
+                    pii_sentences = extract_pii_from_json(full_path)
+                    print(f"     - 발견된 PII 문장 수: {len(pii_sentences.pii_sentences)}")
+                    
+                    # 2. AudioTranscriptInfo 객체 생성 및 로드
+                    print("  2. 전사 정보 로드 중...")
+                    audio_info = AudioTranscriptInfo("dummy_audio_path")
+                    
+                    if not audio_info.load_from_json(full_path):
+                        print("     ❌ JSON 파일 로드 실패")
+                        continue
+                    
+                    print(f"     - 세그먼트 수: {len(audio_info.segments)}")
+                    
+                    # 3. PII 식별 및 is_pii 플래그 설정
+                    print("  3. PII 플래그 설정 중...")
+                    processed_audio_info = de_identification(audio_info, pii_sentences)
+                    
+                    # PII가 설정된 단어 개수 확인
+                    pii_word_count = 0
+                    for segment in processed_audio_info.segments:
+                        for word in segment.words:
+                            if word.is_pii:
+                                pii_word_count += 1
+                    
+                    print(f"     - PII 플래그가 설정된 단어 수: {pii_word_count}")
+                    
+                    # 4. 결과 저장
+                    print("  4. 결과 저장 중...")
+                    result_path = processed_audio_info.save_to_json(output_dir)
+                    print(f"     ✅ 저장 완료: {result_path}")
+                    
+                except Exception as e:
+                    print(f"     ❌ 파일 처리 중 오류 발생: {e}")
+                    continue
+                
+                print()

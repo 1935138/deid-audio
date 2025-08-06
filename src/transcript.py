@@ -157,4 +157,4 @@ if __name__ == "__main__":
                 # transcribe_audio(full_path, "medium", "output/transcript")
                 # transcribe_audio(full_path, "byoussef/whisper-large-v2-Ko", "output/transcript_byoussef_whisper-large-v2-Ko")
                 # transcribe_audio(full_path, "Systran/faster-whisper-large-v3", "output/transcript")
-                transcribe_audio(full_path, "medium", "output")
+                transcribe_audio(full_path, "medium", "output/transcript")

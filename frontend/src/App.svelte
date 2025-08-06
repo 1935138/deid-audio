@@ -3,12 +3,14 @@
   
   let audioFiles = [];
   let jsonFiles = [];
+  let processedFiles = [];
   let selectedAudio = null;
   let selectedJson = null;
   let jsonContent = null;
   let audioPlayer;
   let currentSegment = null;
   let transcriptViewer;
+  let showProcessedFiles = true;
 
   // JSON 파일명에서 기본 ID를 추출하는 함수
   function extractBaseId(filename) {
@@ -24,14 +26,47 @@
 
   onMount(async () => {
     try {
-      const response = await fetch('/api/files');
-      const data = await response.json();
-      audioFiles = data.audioFiles;
-      jsonFiles = data.jsonFiles;
+      console.log('API 호출 시작...');
+      const [filesResponse, processedResponse] = await Promise.all([
+        fetch('/api/files'),
+        fetch('/api/processed-files')
+      ]);
+      
+      console.log('files API 응답:', filesResponse);
+      console.log('processed API 응답:', processedResponse);
+      
+      const filesData = await filesResponse.json();
+      const processedData = await processedResponse.json();
+      
+      console.log('files 데이터:', filesData);
+      console.log('processed 데이터:', processedData);
+      
+      audioFiles = filesData.audioFiles;
+      jsonFiles = filesData.jsonFiles;
+      processedFiles = processedData.files || [];
+
+      console.log('상태 업데이트 완료:', {
+        audioFiles,
+        jsonFiles,
+        processedFiles
+      });
     } catch (error) {
       console.error('파일 목록을 불러오는데 실패했습니다:', error);
     }
   });
+
+  function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  }
+
+  function formatDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('ko-KR') + ' ' + date.toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit'});
+  }
 
   async function loadJsonContent(filename) {
     try {
@@ -141,18 +176,55 @@
   <div class="container">
     <!-- 좌측 영역: 전사 파일 목록 (1) -->
     <div class="file-list-section">
-      <h2>전사 파일 목록</h2>
-      <div class="file-list">
-        {#each jsonFiles as file}
-          <button
-            class="file-item"
-            class:selected={selectedJson === file}
-            on:click={() => loadJsonContent(file)}
-          >
-            {file}
-          </button>
-        {/each}
+      <div class="tabs">
+        <button 
+          class="tab"
+          class:active={showProcessedFiles}
+          on:click={() => showProcessedFiles = true}
+        >
+          Processed 파일 ({processedFiles.length})
+        </button>
+        <button 
+          class="tab"
+          class:active={!showProcessedFiles}
+          on:click={() => showProcessedFiles = false}
+        >
+          전체 파일 ({jsonFiles.length})
+        </button>
       </div>
+
+      {#if showProcessedFiles}
+        <div class="file-list">
+          <h3>Processed JSON 파일</h3>
+          {#each processedFiles as file}
+            <div class="processed-file-item" class:selected={selectedJson === file.name}>
+              <button
+                class="file-name-btn"
+                on:click={() => loadJsonContent(file.name)}
+              >
+                {file.name}
+              </button>
+              <div class="file-info">
+                <span class="file-size">{formatFileSize(file.size)}</span>
+                <span class="file-date">{formatDate(file.modified)}</span>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="file-list">
+          <h3>전체 전사 파일</h3>
+          {#each jsonFiles as file}
+            <button
+              class="file-item"
+              class:selected={selectedJson === file}
+              on:click={() => loadJsonContent(file)}
+            >
+              {file}
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     <!-- 우측 영역: 오디오 플레이어 및 전사 내용 -->
@@ -306,6 +378,96 @@
     color: #333;
     font-size: 1.2rem;
     font-weight: 600;
+  }
+
+  h3 {
+    margin: 0 0 1rem 0;
+    color: #333;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+
+  .tabs {
+    display: flex;
+    margin-bottom: 1rem;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  .tab {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    background: white;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    color: #666;
+  }
+
+  .tab:hover {
+    background: #f8f9fa;
+  }
+
+  .tab.active {
+    background: #007bff;
+    color: white;
+  }
+
+  .processed-file-item {
+    background: white;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+  }
+
+  .processed-file-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  }
+
+  .processed-file-item.selected {
+    box-shadow: 0 2px 6px rgba(0, 123, 255, 0.3);
+    border: 2px solid #007bff;
+  }
+
+  .file-name-btn {
+    width: 100%;
+    padding: 0.75rem;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #333;
+    word-break: break-all;
+  }
+
+  .processed-file-item.selected .file-name-btn {
+    color: #007bff;
+  }
+
+  .file-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 0.75rem 0.75rem 0.75rem;
+    font-size: 0.75rem;
+    color: #666;
+    border-top: 1px solid #f0f0f0;
+  }
+
+  .file-size {
+    font-weight: 500;
+    color: #007bff;
+  }
+
+  .file-date {
+    color: #999;
   }
 
   .file-list {
