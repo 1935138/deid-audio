@@ -251,7 +251,7 @@ JSON 스키마:
     },
     {
       "sentence_id": 202,
-      "pii_text": "전영희",
+      "pii_text": "전, 영, 희",
       "pii_type": "NAME"
     }
   ]
