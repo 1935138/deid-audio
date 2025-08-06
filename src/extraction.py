@@ -1,7 +1,8 @@
 import json
-from optparse import Option
 import requests
 import re
+import os
+import argparse
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Dict, Set
 from audio_transcript_info import AudioTranscriptInfo
@@ -454,59 +455,124 @@ def is_valid_pii(text: str) -> bool:
     return True
 
 
-import os
-
-if __name__ == "__main__":
-    output_dir = "output/processed"
+def process_file(input_file_path: str, output_dir: str) -> bool:
+    """단일 JSON 파일을 처리합니다."""
+    print(f"▶ 처리 대상: {input_file_path}")
     
+    try:
+        # 1. PII 추출
+        print("  1. PII 추출 중...")
+        pii_sentences = extract_pii_from_json(input_file_path)
+        print(f"     - 발견된 PII 문장 수: {len(pii_sentences.pii_sentences)}")
+        
+        # 2. AudioTranscriptInfo 객체 생성 및 로드
+        print("  2. 전사 정보 로드 중...")
+        audio_info = AudioTranscriptInfo("dummy_audio_path")
+        
+        if not audio_info.load_from_json(input_file_path):
+            print("     ❌ JSON 파일 로드 실패")
+            return False
+        
+        print(f"     - 세그먼트 수: {len(audio_info.segments)}")
+        
+        # 3. PII 식별 및 is_pii 플래그 설정
+        print("  3. PII 플래그 설정 중...")
+        processed_audio_info = de_identification(audio_info, pii_sentences)
+        
+        # PII가 설정된 단어 개수 확인
+        pii_word_count = 0
+        for segment in processed_audio_info.segments:
+            for word in segment.words:
+                if word.is_pii:
+                    pii_word_count += 1
+        
+        print(f"     - PII 플래그가 설정된 단어 수: {pii_word_count}")
+        
+        # 4. 결과 저장
+        print("  4. 결과 저장 중...")
+        result_path = processed_audio_info.save_to_json(output_dir)
+        print(f"     ✅ 저장 완료: {result_path}")
+        return True
+        
+    except Exception as e:
+        print(f"     ❌ 파일 처리 중 오류 발생: {e}")
+        return False
+
+
+def process_input(input_path: str, output_dir: str):
+    """입력 경로가 파일인지 폴더인지 판단하여 처리합니다."""
     # 출력 디렉토리 생성
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+        print(f"📁 출력 디렉토리 생성: {output_dir}")
     
-    for root, dirs, files in os.walk("output/transcript"):
-        for file in files:
-            # if not file.startswith("202103231200019_ai-stt-relay002"):
-                # continue
-            if file.endswith(".json"):
-                full_path = os.path.join(root, file)
-                print(f"▶ 처리 대상: {full_path}")
-                
-                try:
-                    # 1. PII 추출
-                    print("  1. PII 추출 중...")
-                    pii_sentences = extract_pii_from_json(full_path)
-                    print(f"     - 발견된 PII 문장 수: {len(pii_sentences.pii_sentences)}")
-                    
-                    # 2. AudioTranscriptInfo 객체 생성 및 로드
-                    print("  2. 전사 정보 로드 중...")
-                    audio_info = AudioTranscriptInfo("dummy_audio_path")
-                    
-                    if not audio_info.load_from_json(full_path):
-                        print("     ❌ JSON 파일 로드 실패")
-                        continue
-                    
-                    print(f"     - 세그먼트 수: {len(audio_info.segments)}")
-                    
-                    # 3. PII 식별 및 is_pii 플래그 설정
-                    print("  3. PII 플래그 설정 중...")
-                    processed_audio_info = de_identification(audio_info, pii_sentences)
-                    
-                    # PII가 설정된 단어 개수 확인
-                    pii_word_count = 0
-                    for segment in processed_audio_info.segments:
-                        for word in segment.words:
-                            if word.is_pii:
-                                pii_word_count += 1
-                    
-                    print(f"     - PII 플래그가 설정된 단어 수: {pii_word_count}")
-                    
-                    # 4. 결과 저장
-                    print("  4. 결과 저장 중...")
-                    result_path = processed_audio_info.save_to_json(output_dir)
-                    print(f"     ✅ 저장 완료: {result_path}")
-                    
-                except Exception as e:
-                    print(f"     ❌ 파일 처리 중 오류 발생: {e}")
-                    continue
-                
-                print()
+    if os.path.isfile(input_path):
+        # 단일 파일 처리
+        if input_path.endswith(".json"):
+            process_file(input_path, output_dir)
+        else:
+            print(f"❌ JSON 파일이 아닙니다: {input_path}")
+    
+    elif os.path.isdir(input_path):
+        # 폴더 처리
+        print(f"📁 폴더 처리 시작: {input_path}")
+        processed_count = 0
+        error_count = 0
+        
+        for root, dirs, files in os.walk(input_path):
+            for file in files:
+                if file.endswith(".json"):
+                    full_path = os.path.join(root, file)
+                    success = process_file(full_path, output_dir)
+                    if success:
+                        processed_count += 1
+                    else:
+                        error_count += 1
+                    print()
+        
+        print(f"📊 처리 완료: 성공 {processed_count}개, 실패 {error_count}개")
+    
+    else:
+        print(f"❌ 입력 경로가 존재하지 않습니다: {input_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="오디오 전사 파일에서 개인정보를 식별하고 비식별화합니다.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+사용 예시:
+  # 폴더 전체 처리
+  python src/extraction.py --input output/transcript --output output/processed_local
+  
+  # 단일 파일 처리  
+  python src/extraction.py --input output/transcript/sample.json --output output/processed_local
+        """
+    )
+    
+    parser.add_argument(
+        "--input", "-i",
+        required=True,
+        help="입력 경로 (JSON 파일 또는 JSON 파일들이 포함된 폴더)"
+    )
+    
+    parser.add_argument(
+        "--output", "-o", 
+        required=True,
+        help="출력 폴더 경로"
+    )
+    
+    args = parser.parse_args()
+    
+    print("🚀 PII 추출 및 비식별화 시작")
+    print(f"📥 입력: {args.input}")
+    print(f"📤 출력: {args.output}")
+    print()
+    
+    process_input(args.input, args.output)
+    
+    print("🎉 모든 처리가 완료되었습니다!")
+
+
+if __name__ == "__main__":
+    main()
