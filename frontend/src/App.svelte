@@ -11,6 +11,15 @@
   let currentSegment = null;
   let transcriptViewer;
   let showProcessedFiles = true;
+  let contextMenu = null;
+  let contextMenuVisible = false;
+  let contextMenuX = 0;
+  let contextMenuY = 0;
+  let selectedWord = null;
+  let selectedSegment = null;
+  let hasUnsavedChanges = false;
+  let saveStatus = null; // 'saving', 'success', 'error'
+  let saveMessage = '';
 
   // JSON 파일명에서 기본 ID를 추출하는 함수
   function extractBaseId(filename) {
@@ -245,9 +254,120 @@
     
     return words;
   }
+
+  function handleWordRightClick(event, segment, word, wordIndex) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    selectedWord = word;
+    selectedSegment = segment;
+    contextMenuX = event.clientX;
+    contextMenuY = event.clientY;
+    contextMenuVisible = true;
+    
+    // 화면 경계 체크
+    const menuWidth = 200;
+    const menuHeight = 80;
+    if (contextMenuX + menuWidth > window.innerWidth) {
+      contextMenuX = window.innerWidth - menuWidth - 10;
+    }
+    if (contextMenuY + menuHeight > window.innerHeight) {
+      contextMenuY = window.innerHeight - menuHeight - 10;
+    }
+  }
+
+  function togglePiiStatus() {
+    if (!selectedWord || !selectedSegment || !jsonContent) return;
+    
+    // 세그먼트에서 해당 단어 찾기
+    const segmentIndex = jsonContent.segments.findIndex(seg => seg === selectedSegment);
+    if (segmentIndex === -1) return;
+    
+    const wordIndex = selectedSegment.words.findIndex(w => 
+      w.word === selectedWord.text && 
+      w.start === selectedWord.start
+    );
+    
+    if (wordIndex !== -1) {
+      // 상태 토글
+      jsonContent.segments[segmentIndex].words[wordIndex].is_pii = !selectedWord.is_pii;
+      hasUnsavedChanges = true;
+      
+      console.log(`PII 상태 변경: "${selectedWord.text}" -> ${!selectedWord.is_pii}`);
+      
+      // 강제로 리액티브 업데이트 트리거
+      jsonContent = { ...jsonContent };
+    }
+    
+    closeContextMenu();
+  }
+
+  function closeContextMenu() {
+    contextMenuVisible = false;
+    selectedWord = null;
+    selectedSegment = null;
+  }
+
+  function handleGlobalClick(event) {
+    if (contextMenuVisible && !event.target.closest('.context-menu')) {
+      closeContextMenu();
+    }
+  }
+
+  async function saveChanges() {
+    if (!hasUnsavedChanges || !selectedJson || !jsonContent) return;
+    
+    saveStatus = 'saving';
+    saveMessage = '저장 중...';
+    
+    try {
+      const response = await fetch(`/api/json/${selectedJson}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(jsonContent)
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        hasUnsavedChanges = false;
+        saveStatus = 'success';
+        saveMessage = '저장 완료!';
+        console.log('변경사항이 저장되었습니다:', result);
+        
+        // 3초 후에 메시지 숨기기
+        setTimeout(() => {
+          saveStatus = null;
+          saveMessage = '';
+        }, 3000);
+      } else {
+        const errorData = await response.json();
+        saveStatus = 'error';
+        saveMessage = errorData.error || '저장에 실패했습니다.';
+        console.error('저장에 실패했습니다:', response.statusText);
+        
+        // 5초 후에 에러 메시지 숨기기
+        setTimeout(() => {
+          saveStatus = null;
+          saveMessage = '';
+        }, 5000);
+      }
+    } catch (error) {
+      saveStatus = 'error';
+      saveMessage = '네트워크 오류가 발생했습니다.';
+      console.error('저장 중 오류가 발생했습니다:', error);
+      
+      // 5초 후에 에러 메시지 숨기기
+      setTimeout(() => {
+        saveStatus = null;
+        saveMessage = '';
+      }, 5000);
+    }
+  }
 </script>
 
-<main class="main-container">
+<main class="main-container" on:click={handleGlobalClick} on:keydown={handleGlobalClick} role="application" tabindex="-1">
   <div class="container">
     <!-- 좌측 영역: 전사 파일 목록 (1) -->
     <div class="file-list-section">
@@ -313,14 +433,31 @@
       <!-- 상단: 오디오 플레이어 -->
       {#if selectedAudio}
         <div class="audio-player-section">
-          <audio
-            controls
-            bind:this={audioPlayer}
-            src={`/api/audio/${selectedAudio}`}
-            on:timeupdate={handleTimeUpdate}
-          >
-            <track kind="captions" />
-          </audio>
+          <div class="audio-controls">
+            <audio
+              controls
+              bind:this={audioPlayer}
+              src={`/api/audio/${selectedAudio}`}
+              on:timeupdate={handleTimeUpdate}
+            >
+              <track kind="captions" />
+            </audio>
+            {#if hasUnsavedChanges}
+              <button 
+                class="save-btn" 
+                class:saving={saveStatus === 'saving'}
+                disabled={saveStatus === 'saving'}
+                on:click={saveChanges}
+              >
+                {saveStatus === 'saving' ? '저장 중...' : '변경사항 저장'}
+              </button>
+            {/if}
+            {#if saveStatus && saveMessage}
+              <div class="save-status" class:success={saveStatus === 'success'} class:error={saveStatus === 'error'}>
+                {saveMessage}
+              </div>
+            {/if}
+          </div>
         </div>
       {/if}
 
@@ -355,7 +492,7 @@
                 </span>
               </div>
               <div class="segment-text">
-                {#each getWords(segment.text, segment) as word}
+                {#each getWords(segment.text, segment) as word, wordIndex}
                   <span 
                     class="word"
                     class:pii={word.is_pii}
@@ -365,6 +502,9 @@
                       e.stopPropagation();
                       handleWordClick(segment, word);
                     }}
+                    on:contextmenu={(e) => {
+                      handleWordRightClick(e, segment, word, wordIndex);
+                    }}
                     role="button"
                     tabindex="0"
                     on:keydown={(e) => {
@@ -373,7 +513,7 @@
                         handleWordClick(segment, word);
                       }
                     }}
-                    title={`PII: ${word.is_pii}`}
+                    title={`PII: ${word.is_pii} (우클릭으로 변경 가능)`}
                   >
                     {word.text}
                   </span>
@@ -385,6 +525,26 @@
       {/if}
     </div>
   </div>
+
+  <!-- 컨텍스트 메뉴 -->
+  {#if contextMenuVisible && selectedWord}
+    <div 
+      class="context-menu"
+      style="left: {contextMenuX}px; top: {contextMenuY}px;"
+    >
+      <button 
+        class="context-menu-item"
+        on:click={togglePiiStatus}
+      >
+        {selectedWord.is_pii ? 'PII 해제' : 'PII 설정'}
+      </button>
+      <div class="context-menu-divider"></div>
+      <div class="context-menu-info">
+        단어: "{selectedWord.text}"<br/>
+        현재 상태: {selectedWord.is_pii ? 'PII' : '일반'}
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -469,17 +629,65 @@
     align-items: center;
   }
 
-  audio {
+  .audio-controls {
     width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  audio {
+    flex: 1;
     height: 50px;
   }
 
-  h2 {
-    margin: 0 0 1rem 0;
-    color: #333;
-    font-size: 1.2rem;
-    font-weight: 600;
+  .save-btn {
+    background: #28a745;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+    white-space: nowrap;
   }
+
+  .save-btn:hover:not(:disabled) {
+    background: #218838;
+  }
+
+  .save-btn:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+  }
+
+  .save-btn.saving {
+    background: #ffc107;
+    color: #212529;
+  }
+
+  .save-status {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .save-status.success {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+  }
+
+  .save-status.error {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+  }
+
+
 
   h3 {
     margin: 0 0 1rem 0;
@@ -687,5 +895,48 @@
     box-shadow: 0 0 3px rgba(0, 255, 0, 0.3);
     padding: 0 4px;
     border-radius: 2px;
+  }
+
+  /* 컨텍스트 메뉴 스타일 */
+  .context-menu {
+    position: fixed;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 180px;
+    overflow: hidden;
+  }
+
+  .context-menu-item {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #333;
+    transition: background-color 0.2s ease;
+  }
+
+  .context-menu-item:hover {
+    background-color: #f8f9fa;
+  }
+
+  .context-menu-divider {
+    height: 1px;
+    background: #eee;
+    margin: 0.25rem 0;
+  }
+
+  .context-menu-info {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    color: #666;
+    background-color: #f8f9fa;
+    border-top: 1px solid #eee;
+    line-height: 1.4;
   }
 </style>

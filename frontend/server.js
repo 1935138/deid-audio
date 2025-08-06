@@ -11,6 +11,7 @@ const app = express();
 const PORT = 3000;
 
 app.use(cors());
+app.use(express.json()); // JSON 파싱 미들웨어 추가
 
 // 정적 파일 서빙 설정
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -145,6 +146,49 @@ app.get('/api/json/:filename', async (req, res) => {
   } catch (error) {
     console.error('Error reading JSON file:', error);
     res.status(404).json({ error: 'JSON 파일을 찾을 수 없습니다.' });
+  }
+});
+
+// JSON 파일 업데이트를 위한 PUT 엔드포인트
+app.put('/api/json/:filename', async (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(__dirname, '..', 'output', 'processed', filename);
+  const updatedData = req.body;
+
+  try {
+    // 파일이 존재하는지 확인
+    await fs.access(filepath);
+    
+    // 업데이트된 데이터를 파일에 저장
+    await fs.writeFile(filepath, JSON.stringify(updatedData, null, 2), 'utf-8');
+    
+    console.log(`JSON 파일 업데이트 완료: ${filename}`);
+    
+    // PII 변경 통계 로깅
+    if (updatedData.segments) {
+      const totalWords = updatedData.segments.reduce((count, segment) => {
+        return count + (segment.words ? segment.words.length : 0);
+      }, 0);
+      
+      const piiWords = updatedData.segments.reduce((count, segment) => {
+        return count + (segment.words ? segment.words.filter(word => word.is_pii).length : 0);
+      }, 0);
+      
+      console.log(`PII 통계 - 전체 단어: ${totalWords}, PII 단어: ${piiWords}`);
+    }
+    
+    res.json({ 
+      success: true, 
+      message: '파일이 성공적으로 업데이트되었습니다.',
+      filename: filename
+    });
+  } catch (error) {
+    console.error('Error updating JSON file:', error);
+    if (error.code === 'ENOENT') {
+      res.status(404).json({ error: 'JSON 파일을 찾을 수 없습니다.' });
+    } else {
+      res.status(500).json({ error: 'JSON 파일 업데이트에 실패했습니다.' });
+    }
   }
 });
 
