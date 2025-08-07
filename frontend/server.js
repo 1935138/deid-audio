@@ -118,6 +118,53 @@ app.get('/api/processed-files', async (req, res) => {
   }
 });
 
+// deid 디렉토리 전용 API
+app.get('/api/deid-files', async (req, res) => {
+  try {
+    console.log('GET /api/deid-files 요청 받음');
+    const deidAudioDir = path.join(__dirname, '..', 'output', 'deid', 'audio');
+    const deidJsonDir = path.join(__dirname, '..', 'output', 'deid', 'json');
+    
+    console.log('deid 디렉토리 경로:', { deidAudioDir, deidJsonDir });
+    
+    const [audioFiles, jsonFiles] = await Promise.all([
+      fs.readdir(deidAudioDir),
+      fs.readdir(deidJsonDir)
+    ]);
+    
+    console.log('deid 파일 목록:', { audioFiles, jsonFiles });
+    
+    // JSON 파일 정보와 함께 반환
+    const jsonFileDetails = await Promise.all(
+      jsonFiles.filter(file => file.endsWith('.json')).map(async (file) => {
+        const filePath = path.join(deidJsonDir, file);
+        const stats = await fs.stat(filePath);
+        return {
+          name: file,
+          size: stats.size,
+          modified: stats.mtime,
+          created: stats.birthtime
+        };
+      })
+    );
+
+    const response = {
+      audioFiles: audioFiles.filter(file => file.match(/\.(wav|mp3)$/)),
+      jsonFiles: jsonFileDetails,
+      count: {
+        audio: audioFiles.filter(file => file.match(/\.(wav|mp3)$/)).length,
+        json: jsonFileDetails.length
+      }
+    };
+    
+    console.log('deid 응답 데이터:', response);
+    res.json(response);
+  } catch (error) {
+    console.error('Error reading deid directory:', error);
+    res.status(500).json({ error: 'deid 파일 목록을 가져오는데 실패했습니다.' });
+  }
+});
+
 app.get('/api/audio/:filename', async (req, res) => {
   const filename = req.params.filename;
   const filepath = path.join(__dirname, '..', 'data', 'raw', filename);
@@ -127,6 +174,19 @@ app.get('/api/audio/:filename', async (req, res) => {
     res.sendFile(filepath);
   } catch (error) {
     res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+  }
+});
+
+// deid 오디오 파일 서빙
+app.get('/api/deid-audio/:filename', async (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(__dirname, '..', 'output', 'deid', 'audio', filename);
+
+  try {
+    await fs.access(filepath);
+    res.sendFile(filepath);
+  } catch (error) {
+    res.status(404).json({ error: 'deid 오디오 파일을 찾을 수 없습니다.' });
   }
 });
 
@@ -146,6 +206,26 @@ app.get('/api/json/:filename', async (req, res) => {
   } catch (error) {
     console.error('Error reading JSON file:', error);
     res.status(404).json({ error: 'JSON 파일을 찾을 수 없습니다.' });
+  }
+});
+
+// deid JSON 파일 서빙
+app.get('/api/deid-json/:filename', async (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(__dirname, '..', 'output', 'deid', 'json', filename);
+
+  try {
+    const content = await fs.readFile(filepath, 'utf-8');
+    const jsonData = JSON.parse(content);
+    
+    if (jsonData.segments) {
+      jsonData.segments = normalizeTimeValues(jsonData.segments);
+    }
+    
+    res.json(jsonData);
+  } catch (error) {
+    console.error('Error reading deid JSON file:', error);
+    res.status(404).json({ error: 'deid JSON 파일을 찾을 수 없습니다.' });
   }
 });
 

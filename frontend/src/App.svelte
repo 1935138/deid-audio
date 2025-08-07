@@ -4,13 +4,14 @@
   let audioFiles = [];
   let jsonFiles = [];
   let processedFiles = [];
+  let deidFiles = { audioFiles: [], jsonFiles: [], count: { audio: 0, json: 0 } };
   let selectedAudio = null;
   let selectedJson = null;
   let jsonContent = null;
   let audioPlayer;
   let currentSegment = null;
   let transcriptViewer;
-  let showProcessedFiles = true;
+  let activeTab = 'processed'; // 'processed', 'raw', 'deid'
   let contextMenu = null;
   let contextMenuVisible = false;
   let contextMenuX = 0;
@@ -20,6 +21,7 @@
   let hasUnsavedChanges = false;
   let saveStatus = null; // 'saving', 'success', 'error'
   let saveMessage = '';
+  let isDeidMode = false; // deid 모드인지 구분
 
   // JSON 파일명에서 기본 ID를 추출하는 함수
   function extractBaseId(filename) {
@@ -36,28 +38,30 @@
   onMount(async () => {
     try {
       console.log('API 호출 시작...');
-      const [filesResponse, processedResponse] = await Promise.all([
+      const [filesResponse, processedResponse, deidResponse] = await Promise.all([
         fetch('/api/files'),
-        fetch('/api/processed-files')
+        fetch('/api/processed-files'),
+        fetch('/api/deid-files')
       ]);
       
-      console.log('files API 응답:', filesResponse);
-      console.log('processed API 응답:', processedResponse);
+      console.log('API 응답들:', { filesResponse, processedResponse, deidResponse });
       
       const filesData = await filesResponse.json();
       const processedData = await processedResponse.json();
+      const deidData = await deidResponse.json();
       
-      console.log('files 데이터:', filesData);
-      console.log('processed 데이터:', processedData);
+      console.log('데이터들:', { filesData, processedData, deidData });
       
       audioFiles = filesData.audioFiles;
       jsonFiles = filesData.jsonFiles;
       processedFiles = processedData.files || [];
+      deidFiles = deidData || { audioFiles: [], jsonFiles: [], count: { audio: 0, json: 0 } };
 
       console.log('상태 업데이트 완료:', {
         audioFiles,
         jsonFiles,
-        processedFiles
+        processedFiles,
+        deidFiles
       });
     } catch (error) {
       console.error('파일 목록을 불러오는데 실패했습니다:', error);
@@ -77,10 +81,12 @@
     return date.toLocaleDateString('ko-KR') + ' ' + date.toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit'});
   }
 
-  async function loadJsonContent(filename) {
+  async function loadJsonContent(filename, isFromDeid = false) {
     try {
-      console.log('🔄 JSON 파일 로드 시작:', filename);
-      const response = await fetch(`/api/json/${filename}`);
+      console.log('🔄 JSON 파일 로드 시작:', filename, 'deid 모드:', isFromDeid);
+      
+      const apiEndpoint = isFromDeid ? `/api/deid-json/${filename}` : `/api/json/${filename}`;
+      const response = await fetch(apiEndpoint);
       console.log('📡 API 응답 상태:', response.status);
       
       const data = await response.json();
@@ -109,15 +115,24 @@
       
       jsonContent = data;
       selectedJson = filename;
+      isDeidMode = isFromDeid;
 
       // JSON 파일에서 기본 ID를 추출하고 매칭되는 오디오 파일을 찾아 자동 선택
       const baseId = extractBaseId(filename);
       if (baseId) {
-        const matchingAudioFile = findMatchingAudioFile(baseId);
+        let matchingAudioFile;
+        if (isFromDeid) {
+          // deid 모드일 때는 deid 오디오 파일에서 찾기
+          matchingAudioFile = deidFiles.audioFiles.find(file => file.startsWith(baseId));
+        } else {
+          // 일반 모드일 때는 기존 오디오 파일에서 찾기
+          matchingAudioFile = findMatchingAudioFile(baseId);
+        }
+        
         if (matchingAudioFile) {
           selectedAudio = matchingAudioFile;
         } else {
-          console.warn('매칭되는 오디오 파일을 찾을 수 없습니다:', baseId);
+          console.warn('매칭되는 오디오 파일을 찾을 수 없습니다:', baseId, 'deid 모드:', isFromDeid);
         }
       }
     } catch (error) {
@@ -374,30 +389,37 @@
       <div class="tabs">
         <button 
           class="tab"
-          class:active={showProcessedFiles}
-          on:click={() => showProcessedFiles = true}
+          class:active={activeTab === 'processed'}
+          on:click={() => activeTab = 'processed'}
         >
           Processed 파일 ({processedFiles.length})
         </button>
         <button 
           class="tab"
-          class:active={!showProcessedFiles}
-          on:click={() => showProcessedFiles = false}
+          class:active={activeTab === 'deid'}
+          on:click={() => activeTab = 'deid'}
+        >
+          비식별화(Deid) 파일 ({deidFiles.count?.json || 0})
+        </button>
+        <button 
+          class="tab"
+          class:active={activeTab === 'raw'}
+          on:click={() => activeTab = 'raw'}
         >
           전체 파일 ({jsonFiles.length})
         </button>
       </div>
 
-      {#if showProcessedFiles}
+      {#if activeTab === 'processed'}
         <div class="file-list">
           <h3>Processed JSON 파일</h3>
           {#each processedFiles as file}
-            <div class="processed-file-item" class:selected={selectedJson === file.name}>
+            <div class="processed-file-item" class:selected={selectedJson === file.name && !isDeidMode}>
               <button
                 class="file-name-btn"
                 on:click={() => {
-                  console.log('🖱️ 파일 클릭됨:', file.name);
-                  loadJsonContent(file.name);
+                  console.log('🖱️ Processed 파일 클릭됨:', file.name);
+                  loadJsonContent(file.name, false);
                 }}
               >
                 {file.name}
@@ -409,16 +431,49 @@
             </div>
           {/each}
         </div>
-      {:else}
+      {:else if activeTab === 'deid'}
+        <div class="file-list">
+          <h3>비식별화된(Deid) JSON 파일</h3>
+          {#each deidFiles.jsonFiles as file}
+            <div class="processed-file-item deid-file" class:selected={selectedJson === file.name && isDeidMode}>
+              <button
+                class="file-name-btn"
+                on:click={() => {
+                  console.log('🖱️ Deid 파일 클릭됨:', file.name);
+                  loadJsonContent(file.name, true);
+                }}
+              >
+                {file.name}
+              </button>
+              <div class="file-info">
+                <span class="file-size">{formatFileSize(file.size)}</span>
+                <span class="file-date">{formatDate(file.modified)}</span>
+              </div>
+            </div>
+          {/each}
+          {#if deidFiles.audioFiles.length > 0}
+            <div class="audio-files-info">
+              <h4>🎵 비식별화된 오디오 파일 ({deidFiles.count?.audio || 0}개)</h4>
+              <div class="audio-file-list">
+                {#each deidFiles.audioFiles as audioFile}
+                  <div class="audio-file-item" class:selected={selectedAudio === audioFile && isDeidMode}>
+                    <span class="audio-file-name">{audioFile}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {:else if activeTab === 'raw'}
         <div class="file-list">
           <h3>전체 전사 파일</h3>
           {#each jsonFiles as file}
             <button
               class="file-item"
-              class:selected={selectedJson === file}
+              class:selected={selectedJson === file && !isDeidMode}
               on:click={() => {
                 console.log('🖱️ 전체 파일 클릭됨:', file);
-                loadJsonContent(file);
+                loadJsonContent(file, false);
               }}
             >
               {file}
@@ -437,7 +492,7 @@
             <audio
               controls
               bind:this={audioPlayer}
-              src={`/api/audio/${selectedAudio}`}
+              src={isDeidMode ? `/api/deid-audio/${selectedAudio}` : `/api/audio/${selectedAudio}`}
               on:timeupdate={handleTimeUpdate}
             >
               <track kind="captions" />
@@ -938,5 +993,104 @@
     background-color: #f8f9fa;
     border-top: 1px solid #eee;
     line-height: 1.4;
+  }
+
+  /* Deid 관련 스타일 */
+  .deid-file {
+    border-left: 4px solid #ff9800;
+  }
+
+  .deid-file.selected {
+    border-color: #ff5722;
+    box-shadow: 0 2px 6px rgba(255, 87, 34, 0.3);
+  }
+
+  .audio-files-info {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: #fff9e6;
+    border-radius: 6px;
+    border: 1px solid #ffe0b3;
+  }
+
+  .audio-files-info h4 {
+    margin: 0 0 0.75rem 0;
+    color: #ff8f00;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .audio-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .audio-file-item {
+    padding: 0.5rem 0.75rem;
+    background: white;
+    border-radius: 4px;
+    border: 1px solid #ffe0b3;
+    transition: all 0.2s ease;
+  }
+
+  .audio-file-item:hover {
+    background: #fff3e0;
+    border-color: #ffcc80;
+  }
+
+  .audio-file-item.selected {
+    background: #ff8f00;
+    color: white;
+    border-color: #ff8f00;
+  }
+
+  .audio-file-name {
+    font-size: 0.85rem;
+    font-family: monospace;
+    word-break: break-all;
+  }
+
+  /* 탭 스타일 개선 */
+  .tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    margin-bottom: 1rem;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  .tab {
+    padding: 0.75rem 0.5rem;
+    background: white;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    color: #666;
+    text-align: center;
+  }
+
+  .tab:hover {
+    background: #f8f9fa;
+  }
+
+  .tab.active {
+    color: white;
+  }
+
+  .tab.active:nth-child(1) {
+    background: #007bff;
+  }
+
+  .tab.active:nth-child(2) {
+    background: #ff8f00;
+  }
+
+  .tab.active:nth-child(3) {
+    background: #28a745;
   }
 </style>
