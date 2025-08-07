@@ -23,23 +23,68 @@ def load_processed_json(json_path: str) -> Dict[str, Any]:
 
 def extract_pii_segments(json_data: Dict[str, Any]) -> List[Tuple[float, float]]:
     """
-    JSON 데이터에서 is_pii가 true인 단어의 시간 구간을 추출합니다.
+    JSON 데이터에서 연속된 PII 블록과 그 앞뒤 경계까지 포함한 시간 구간을 추출합니다.
+    PII 단어들의 앞뒤 non-PII 단어 경계까지 포함하여 더 안전한 묵음 처리를 수행합니다.
     
     Args:
         json_data (Dict[str, Any]): 처리된 JSON 데이터
         
     Returns:
-        List[Tuple[float, float]]: PII 구간 리스트 [(start_time, end_time), ...]
+        List[Tuple[float, float]]: 확장된 PII 구간 리스트 [(start_time, end_time), ...]
     """
     pii_segments = []
     
+    # 모든 세그먼트의 모든 단어를 하나의 리스트로 수집
+    all_words = []
     for segment in json_data.get('segments', []):
-        for word in segment.get('words', []):
-            if word.get('is_pii', False):
-                start_time = word.get('start', 0.0)
-                end_time = word.get('end', 0.0)
-                pii_segments.append((start_time, end_time))
-                print(f"PII 구간 발견: {start_time:.2f}s - {end_time:.2f}s, 텍스트: '{word.get('word', '')}'")
+        all_words.extend(segment.get('words', []))
+    
+    if not all_words:
+        return pii_segments
+    
+    # 연속된 PII 블록 찾기
+    i = 0
+    while i < len(all_words):
+        word = all_words[i]
+        
+        # PII 단어를 발견하면 블록 시작
+        if word.get('is_pii', False):
+            pii_block_start_idx = i
+            pii_block_end_idx = i
+            
+            # 연속된 PII 단어들 찾기
+            while pii_block_end_idx + 1 < len(all_words) and all_words[pii_block_end_idx + 1].get('is_pii', False):
+                pii_block_end_idx += 1
+            
+            # PII 블록의 실제 시작/끝 시간
+            pii_start_time = all_words[pii_block_start_idx].get('start', 0.0)
+            pii_end_time = all_words[pii_block_end_idx].get('end', 0.0)
+            
+            # 확장된 구간 계산
+            # 시작점: 이전 단어의 끝 시간 (이전 단어가 없으면 PII 블록의 시작 시간)
+            if pii_block_start_idx > 0:
+                extended_start_time = all_words[pii_block_start_idx - 1].get('end', pii_start_time)
+            else:
+                extended_start_time = pii_start_time
+            
+            # 끝점: 다음 단어의 시작 시간 (다음 단어가 없으면 PII 블록의 끝 시간)
+            if pii_block_end_idx + 1 < len(all_words):
+                extended_end_time = all_words[pii_block_end_idx + 1].get('start', pii_end_time)
+            else:
+                extended_end_time = pii_end_time
+            
+            # PII 블록 정보 출력
+            pii_words = [all_words[j].get('word', '') for j in range(pii_block_start_idx, pii_block_end_idx + 1)]
+            print(f"PII 블록 발견: {pii_start_time:.2f}s - {pii_end_time:.2f}s")
+            print(f"  PII 단어들: {pii_words}")
+            print(f"  확장된 묵음 구간: {extended_start_time:.2f}s - {extended_end_time:.2f}s")
+            
+            pii_segments.append((extended_start_time, extended_end_time))
+            
+            # 다음 반복을 위해 블록 끝 이후로 이동
+            i = pii_block_end_idx + 1
+        else:
+            i += 1
     
     return pii_segments
 
